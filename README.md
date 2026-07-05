@@ -42,7 +42,7 @@ func Load() (Config, error) {
 }
 ```
 
-Group related settings into their own structs and compose them. Ultra follows embedded structs, so `GOOGLE_CLIENT_ID` and `DATABASE_URL` above are discovered through `GoogleConfig` and `DatabaseConfig` just as if they were declared inline. Then call `Load()` once at the start of your application:
+Then call `Load()` once at the start of your application:
 
 ```go
 cfg, err := config.Load()
