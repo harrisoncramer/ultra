@@ -93,6 +93,16 @@ ultra run 1password --vault MyVault -- docker compose up
 ultra run aws-secret-manager --region us-east-1 -- docker compose up
 ```
 
+### Validating configuration
+
+The `ultra validate` takes the same resolver and flags as `run` and resolves secrets the same way, but instead of starting containers, it checks that every app's `config.Load` succeeds. 
+
+```bash
+ultra validate aws-secret-manager --region us-east-1
+```
+
+Use this command to fail fast before `docker compose up`, or to gate a deploy.
+
 ### Writing a custom resolver
 
 You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a resolver, and call `cli.Execute` from your own `main` — the built-in resolvers come along, and yours becomes another `run` subcommand.
