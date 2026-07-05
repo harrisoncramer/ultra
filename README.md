@@ -10,7 +10,7 @@ NOTE: This project is in Alpha and subject to breaking changes.
 
 All secrets start in a secret store (1Password, AWS Secrets Manager), and must end up as an environment variable inside a running container. This is what `ultra` helps with.
 
-There are two parts of the ultra package. The first, Ultra's `Config` object, is a thin wrapper around [https://github.com/caarlos0/env](caarlos0/env), which reads and validates your app's configuration. Export your Config (or compose multiple) from a `config` package, and at application startup, call the `Load()` method to expose the secrets:
+There are two parts of the ultra package. The first, Ultra's `Config` object, is a thin wrapper around [caarlos0/env](https://github.com/caarlos0/env), which reads and validates your app's configuration. Export your Config (or compose multiple) from a `config` package, and at application startup, call the `Load()` method to expose the secrets:
 
 ```go
 // Package config defines the app's configuration, loaded from the environment via the shared ultra loader.
