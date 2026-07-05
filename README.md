@@ -109,6 +109,30 @@ ultra validate --secret-resolver aws-secret-manager --region us-east-1
 
 Use it to fail fast before `docker compose up`, or to gate a deploy. In a running container or pod, where the non-secret values are already in the environment, use `--config-resolver env`.
 
+### Configuration file
+
+Every flag can be prebaked in an optional `.ultra.toml` at the repo root, so you don't repeat `--secret-resolver`, `--region`, and friends on every invocation. Anything passed on the command line overrides the file. The file is split into a `[secrets]` section (the secret resolver and its own flags) and a `[config]` section (the config resolver), with shared flags at the top level:
+
+```toml
+[secrets]
+resolver = "aws-secret-manager"   # --secret-resolver
+region   = "us-east-1"            # the resolver's own flag
+
+[config]
+resolver = "docker-compose"       # --config-resolver
+
+apps-dir = "services"             # a shared flag (--apps-dir); omit to default to apps
+```
+
+With that file in place, both commands shrink to:
+
+```bash
+ultra run -- docker compose up
+ultra validate
+```
+
+The file is optional; with no `.ultra.toml`, pass everything on the command line as before.
+
 ### Writing a custom secret resolver
 
 You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a secret resolver, and call `cli.Execute` from your own `main` — the built-in resolvers come along, and yours becomes another `--secret-resolver` choice.

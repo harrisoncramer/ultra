@@ -3,15 +3,20 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 // Execute builds the ultra command tree — root, run, validate — and runs it.
+// Flags default to any values set in .ultra.toml at the repo root; the command
+// line overrides them.
 func Execute() error {
-	return newRootCmd().ExecuteContext(context.Background())
+	fc, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	return newRootCmd(fc).ExecuteContext(context.Background())
 }
 
 type sharedFlags struct {
@@ -19,19 +24,19 @@ type sharedFlags struct {
 	appsDir string
 }
 
-func newRootCmd() *cobra.Command {
+func newRootCmd(fc fileConfig) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "ultra",
 		Short:         "Wire every app's config.go secrets into local docker-compose dev",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
-	root.AddCommand(newRunCmd())
-	root.AddCommand(newValidateCmd())
+	root.AddCommand(newRunCmd(fc))
+	root.AddCommand(newValidateCmd(fc))
 	return root
 }
 
-func newRunCmd() *cobra.Command {
+func newRunCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
 	var secretResolver string
 
@@ -46,9 +51,12 @@ func newRunCmd() *cobra.Command {
 	}
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
-	resolverFor := bindSelectedSecretResolver(cmd)
+	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := applyConfigDefaults(cmd, fc); err != nil {
+			return err
+		}
 		if resolverFor == nil {
 			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
 		}
@@ -66,7 +74,7 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
-func newValidateCmd() *cobra.Command {
+func newValidateCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
 	var secretResolver, configResolver string
 
@@ -83,9 +91,12 @@ func newValidateCmd() *cobra.Command {
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
-	resolverFor := bindSelectedSecretResolver(cmd)
+	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := applyConfigDefaults(cmd, fc); err != nil {
+			return err
+		}
 		if resolverFor == nil {
 			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
 		}
@@ -110,10 +121,11 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 
 // bindSelectedSecretResolver binds the flags of the resolver named by
 // --secret-resolver onto cmd, so only that resolver's flags are defined — no
-// prefixing, no collisions between resolvers — and returns its factory. It reads
-// the flag value from the raw args since flags aren't parsed yet at build time.
-func bindSelectedSecretResolver(cmd *cobra.Command) func(app string) SecretResolver {
-	name := rawFlagValue(os.Args, "secret-resolver")
+// prefixing, no collisions between resolvers — and returns its factory. The name
+// comes from the command line or, failing that, .ultra.toml, since the resolver's
+// flags must be bound before cobra parses.
+func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app string) SecretResolver {
+	name := fc.effective("secret-resolver")
 	for _, rc := range secretResolvers {
 		if rc.Name == name {
 			return rc.Setup(cmd.Flags())
