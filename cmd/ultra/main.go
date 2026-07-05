@@ -1,8 +1,3 @@
-// The resolver is a required subcommand of run (for example `1password`) and
-// carries its own flags. For every app under the apps directory it: generates a
-// names-only compose override that forwards those env vars into the container,
-// resolves the values via the chosen resolver in memory, points compose at the
-// overrides via COMPOSE_FILE, and execs the given command.
 package main
 
 import (
