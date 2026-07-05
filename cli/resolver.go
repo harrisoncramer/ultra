@@ -27,6 +27,7 @@ type Resolver interface {
 type ResolverCommand struct {
 	Name  string
 	Short string
+	Long  string
 	Setup func(fs *pflag.FlagSet) func(app string) Resolver
 }
 

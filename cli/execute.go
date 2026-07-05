@@ -57,6 +57,7 @@ func resolverSubcmd(rc ResolverCommand, shared *sharedFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   rc.Name + " [flags] -- <command>...",
 		Short: rc.Short,
+		Long:  rc.Long,
 		Args:  cobra.MinimumNArgs(1),
 	}
 
