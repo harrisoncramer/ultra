@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/harrisoncramer/ultra"
-	compose "github.com/harrisoncramer/ultra/compose"
-	"github.com/harrisoncramer/ultra/resolvers"
+	compose "github.com/harrisoncramer/ultra/pkg/compose"
+	"github.com/harrisoncramer/ultra/pkg/resolvers"
+	"github.com/harrisoncramer/ultra/pkg/secrets"
 
 	"github.com/spf13/cobra"
 )
@@ -113,7 +113,7 @@ func run(ctx context.Context, p runParams) error {
 	composeFiles := []string{filepath.Join(p.root, "docker-compose.yml")}
 
 	for _, app := range apps {
-		names, err := ultra.SecretNames(configDir(p.root, p.appsDir, app))
+		names, err := secrets.SecretNames(configDir(p.root, p.appsDir, app))
 		if err != nil {
 			return fmt.Errorf("reading %s config: %w", app, err)
 		}

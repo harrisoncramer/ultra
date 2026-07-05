@@ -7,7 +7,7 @@ import (
 	"reflect"
 
 	"github.com/caarlos0/env/v10"
-	secrets "github.com/harrisoncramer/ultra/secrets"
+	secrets "github.com/harrisoncramer/ultra/pkg/secrets"
 )
 
 // Load parses T from the environment, returning an error if anything required is

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	secrets "github.com/harrisoncramer/ultra/secrets"
+	secrets "github.com/harrisoncramer/ultra/pkg/secrets"
 )
 
 type nestedSecrets struct {
