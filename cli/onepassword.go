@@ -1,4 +1,4 @@
-package resolvers
+package cli
 
 import (
 	"bytes"
@@ -8,43 +8,21 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/harrisoncramer/ultra/cmd/ultra/flags"
-	"github.com/harrisoncramer/ultra/cmd/ultra/runner"
-
-	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
-// NewOnePasswordCmd builds the `1password` resolver subcommand of run. It reads
-// each app's secrets from a vault item named after the app, one field per secret
-// name, via the op CLI.
-func NewOnePasswordCmd(shared *flags.SharedFlags) *cobra.Command {
-	var vault string
-
-	cmd := &cobra.Command{
-		Use:   "1password --vault <vault> -- <command>...",
+func init() {
+	RegisterResolver(ResolverCommand{
+		Name:  "1password",
 		Short: "Resolve secrets from 1Password via the op CLI",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dash := cmd.ArgsLenAtDash()
-			if dash < 0 || dash >= len(args) {
-				return fmt.Errorf("usage: ultra run 1password --vault <vault> -- <command>")
+		Setup: func(fs *pflag.FlagSet) func(app string) Resolver {
+			var vault string
+			fs.StringVar(&vault, "vault", "", "1password vault holding the secrets (required)")
+			return func(app string) Resolver {
+				return onePassword{vault: vault, item: app}
 			}
-			if vault == "" {
-				return fmt.Errorf("1password requires --vault")
-			}
-			return runner.Run(cmd.Context(), runner.Params{
-				Root:    shared.Root,
-				AppsDir: shared.AppsDir,
-				ResolverFor: func(app string) runner.Resolver {
-					return onePassword{vault: vault, item: app}
-				},
-				Command: args[dash:],
-			})
 		},
-	}
-
-	cmd.Flags().StringVar(&vault, "vault", "", "1password vault holding the secrets (required)")
-	return cmd
+	})
 }
 
 // onePassword resolves secrets from a 1Password vault item via the op CLI. All of
@@ -69,6 +47,10 @@ type opItem struct {
 // A missing vault or item is a fatal error; a missing individual field is simply
 // omitted from the result.
 func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]string, error) {
+	if o.vault == "" {
+		return nil, fmt.Errorf("1password requires --vault")
+	}
+
 	cmd := exec.CommandContext(ctx, "op", "item", "get", o.item, "--vault", o.vault, "--format", "json", "--reveal")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

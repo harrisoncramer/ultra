@@ -95,61 +95,53 @@ ultra run aws --region us-east-1 -- docker compose up
 
 ### Writing a custom resolver
 
-A resolver is any type with a `Resolve` method. To add one, drop a file under `cmd/ultra/resolvers`, implement the interface, and expose it as a `run` subcommand. The runner handles discovery, overrides, namespacing, and exec — your resolver only fetches values.
+You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a resolver, and call `cli.Execute` from your own `main` — the built-in resolvers come along, and yours becomes another `run` subcommand.
+
+A resolver is any type with a `Resolve` method. `Setup` binds the resolver's flags and returns a factory that builds a resolver per app once those flags are parsed.
 
 ```go
-package resolvers
+package main
 
 import (
 	"context"
-	"fmt"
+	"os"
 
-	"github.com/harrisoncramer/ultra/cmd/ultra/flags"
-	"github.com/harrisoncramer/ultra/cmd/ultra/runner"
+	"github.com/harrisoncramer/ultra/cli"
 
-	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
-// myStore fetches secrets from wherever you keep them.
-type myStore struct {
-	app string
-	// connection config, populated from flags
+func main() {
+	cli.RegisterResolver(cli.ResolverCommand{
+		Name:  "vault",
+		Short: "Resolve secrets from HashiCorp Vault",
+		Setup: func(fs *pflag.FlagSet) func(app string) cli.Resolver {
+			var addr string
+			fs.StringVar(&addr, "addr", "", "vault address")
+			return func(app string) cli.Resolver {
+				return vaultResolver{addr: addr, app: app}
+			}
+		},
+	})
+	if err := cli.Execute(); err != nil {
+		os.Exit(1)
+	}
 }
 
-func (m myStore) Resolve(ctx context.Context, names []string) (map[string]string, error) {
+// vaultResolver fetches secrets from wherever you keep them.
+type vaultResolver struct {
+	addr string
+	app  string
+}
+
+func (v vaultResolver) Resolve(ctx context.Context, names []string) (map[string]string, error) {
 	out := make(map[string]string, len(names))
 	for _, name := range names {
-		// Look up name for m.app and set out[name]; omit it if the store has no
+		// Look up name for v.app and set out[name]; omit it if the store has no
 		// such secret. Return a non-nil error only if the store is unreachable.
 	}
 	return out, nil
 }
-
-func NewMyStoreCmd(shared *flags.SharedFlags) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:  "mystore -- <command>...",
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dash := cmd.ArgsLenAtDash()
-			if dash < 0 || dash >= len(args) {
-				return fmt.Errorf("usage: ultra run mystore -- <command>")
-			}
-			return runner.Run(cmd.Context(), runner.Params{
-				Root:        shared.Root,
-				AppsDir:     shared.AppsDir,
-				ResolverFor: func(app string) runner.Resolver { return myStore{app: app} },
-				Command:     args[dash:],
-			})
-		},
-	}
-	return cmd
-}
 ```
 
-Register it in `newRunCmd` (`cmd/ultra/main.go`):
-
-```go
-cmd.AddCommand(resolvers.NewMyStoreCmd(shared))
-```
-
-`ultra run mystore -- docker compose up` now resolves through your store.
+Build that `main` (`go install .`) and run it in place of the stock ultra binary. `ultra run vault --addr … -- docker compose up` resolves through your store, and `1password` and `aws` still work. The CLI handles discovery, overrides, namespacing, and exec — your resolver only fetches values.

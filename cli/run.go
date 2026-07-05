@@ -1,8 +1,4 @@
-// Package runner drives the shared flow every resolver subcommand uses: discover
-// apps, generate compose overrides, resolve each app's secrets, and exec the
-// given command with them in the environment. Resolver subcommands differ only
-// in how they build a resolver, which they pass in via Params.ResolverFor.
-package runner
+package cli
 
 import (
 	"context"
@@ -16,29 +12,27 @@ import (
 	"github.com/harrisoncramer/ultra/pkg/secrets"
 )
 
-// Params configures a run. ResolverFor builds the resolver for a given app, so
-// each resolver subcommand supplies its own backend while sharing this flow.
-type Params struct {
-	Root        string
-	AppsDir     string
-	ResolverFor func(app string) Resolver
-	Command     []string
+type runParams struct {
+	root        string
+	appsDir     string
+	resolverFor func(app string) Resolver
+	command     []string
 }
 
-// Run resolves every app's secrets and execs Command with them set in the
+// run resolves every app's secrets and execs command with them set in the
 // environment and COMPOSE_FILE pointed at the generated overrides. No secret is
 // written to disk.
-func Run(ctx context.Context, p Params) error {
-	apps, err := discoverApps(p.Root, p.AppsDir)
+func run(ctx context.Context, p runParams) error {
+	apps, err := discoverApps(p.root, p.appsDir)
 	if err != nil {
 		return err
 	}
 
 	env := os.Environ()
-	composeFiles := []string{filepath.Join(p.Root, "docker-compose.yml")}
+	composeFiles := []string{filepath.Join(p.root, "docker-compose.yml")}
 
 	for _, app := range apps {
-		names, err := secrets.SecretNames(configDir(p.Root, p.AppsDir, app))
+		names, err := secrets.SecretNames(configDir(p.root, p.appsDir, app))
 		if err != nil {
 			return fmt.Errorf("reading %s config: %w", app, err)
 		}
@@ -46,7 +40,7 @@ func Run(ctx context.Context, p Params) error {
 			continue
 		}
 
-		override := filepath.Join(p.Root, "tmp", app+".compose.yml")
+		override := filepath.Join(p.root, "tmp", app+".compose.yml")
 		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
 			return err
 		}
@@ -55,9 +49,9 @@ func Run(ctx context.Context, p Params) error {
 		}
 		composeFiles = append(composeFiles, override)
 
-		// One round-trip per app. A missing vault/item is fatal here; a missing
+		// One round-trip per app. A store-level failure is fatal here; a missing
 		// individual secret is not.
-		values, err := p.ResolverFor(app).Resolve(ctx, names)
+		values, err := p.resolverFor(app).Resolve(ctx, names)
 		if err != nil {
 			return err
 		}
@@ -72,11 +66,11 @@ func Run(ctx context.Context, p Params) error {
 
 	env = append(env, "COMPOSE_FILE="+strings.Join(composeFiles, string(os.PathListSeparator)))
 
-	bin, err := exec.LookPath(p.Command[0])
+	bin, err := exec.LookPath(p.command[0])
 	if err != nil {
-		return fmt.Errorf("command not found: %s", p.Command[0])
+		return fmt.Errorf("command not found: %s", p.command[0])
 	}
-	c := exec.CommandContext(ctx, bin, p.Command[1:]...)
+	c := exec.CommandContext(ctx, bin, p.command[1:]...)
 	c.Env = env
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
