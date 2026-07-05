@@ -30,7 +30,10 @@ apps-dir = "services"
 
 [secrets]
 resolver = "aws-secret-manager"
+
+[secrets.aws-secret-manager]
 region = "us-east-1"
+profile = "prod"
 
 [config]
 resolver = "docker-compose"
@@ -38,6 +41,7 @@ resolver = "docker-compose"
 	cases := map[string]string{
 		"secret-resolver": "aws-secret-manager",
 		"region":          "us-east-1",
+		"profile":         "prod",
 		"config-resolver": "docker-compose",
 		"apps-dir":        "services",
 	}
@@ -48,12 +52,34 @@ resolver = "docker-compose"
 	}
 }
 
+func TestFlattenIgnoresUnselectedResolver(t *testing.T) {
+	// vault belongs to 1password; with aws-secret-manager selected it must not leak.
+	fc := loadFrom(t, `
+[secrets]
+resolver = "aws-secret-manager"
+
+[secrets.aws-secret-manager]
+region = "us-east-1"
+
+[secrets.1password]
+vault = "Engineering"
+`)
+	if _, ok := fc["vault"]; ok {
+		t.Errorf("vault leaked from unselected 1password sub-table: %v", fc)
+	}
+	if fc["region"] != "us-east-1" {
+		t.Errorf("region = %q, want us-east-1", fc["region"])
+	}
+}
+
 func TestApplyConfigDefaults(t *testing.T) {
 	fc := loadFrom(t, `
 apps-dir = "services"
 
 [secrets]
 resolver = "aws-secret-manager"
+
+[secrets.aws-secret-manager]
 region = "us-east-1"
 `)
 
@@ -83,7 +109,7 @@ region = "us-east-1"
 }
 
 func TestEffectiveFromFile(t *testing.T) {
-	fc := loadFrom(t, "[secrets]\nresolver = \"1password\"\n")
+	fc := loadFrom(t, "[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n")
 	if got := fc.effective("secret-resolver"); got != "1password" {
 		t.Errorf("effective = %q, want 1password (from file)", got)
 	}

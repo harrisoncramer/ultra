@@ -20,13 +20,19 @@ func init() {
 			"the app 'worker', the GOOGLE_CLIENT_ID secret is 'worker/GOOGLE_CLIENT_ID'.\n" +
 			"Pass --prefix to add a leading segment, e.g. --prefix prod gives\n" +
 			"'prod/worker/GOOGLE_CLIENT_ID'. All of an app's secrets are fetched in one\n" +
-			"batch-get-secret-value call using your local AWS credentials.",
+			"batch-get-secret-value call.\n\n" +
+			"Credentials and the target account are resolved by the aws CLI's standard\n" +
+			"chain — environment variables, --profile, ~/.aws SSO, or an IAM role — so\n" +
+			"the account is whichever those credentials belong to. Pass --profile to pin\n" +
+			"a named profile instead of relying on the default; --region sets the region\n" +
+			"when it isn't already configured for that profile.",
 		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
-			var region, prefix string
+			var region, prefix, profile string
 			fs.StringVar(&region, "region", "", "AWS region (defaults to the aws CLI's configured region)")
 			fs.StringVar(&prefix, "prefix", "", "path segment prepended before the app, e.g. an environment name")
+			fs.StringVar(&profile, "profile", "", "named AWS profile to use (defaults to the aws CLI's credential chain)")
 			return func(app string) SecretResolver {
-				return awsSecretsManager{app: app, prefix: prefix, region: region}
+				return awsSecretsManager{app: app, prefix: prefix, region: region, profile: profile}
 			}
 		},
 	})
@@ -37,9 +43,10 @@ func init() {
 // an app's secrets are fetched in one batch-get-secret-value call via the aws
 // CLI, which uses the local AWS credential chain, so no keys are passed here.
 type awsSecretsManager struct {
-	app    string
-	prefix string
-	region string
+	app     string
+	prefix  string
+	region  string
+	profile string
 }
 
 // awsBatchLimit is the maximum number of secret ids AWS accepts per
@@ -66,6 +73,9 @@ func (a awsSecretsManager) Resolve(ctx context.Context, names []string) (map[str
 		cmdArgs := []string{"secretsmanager", "batch-get-secret-value", "--output", "json"}
 		if a.region != "" {
 			cmdArgs = append(cmdArgs, "--region", a.region)
+		}
+		if a.profile != "" {
+			cmdArgs = append(cmdArgs, "--profile", a.profile)
 		}
 		cmdArgs = append(cmdArgs, "--secret-id-list")
 		cmdArgs = append(cmdArgs, batch...)

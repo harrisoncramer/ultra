@@ -111,20 +111,38 @@ Use it to fail fast before `docker compose up`, or to gate a deploy. In a runnin
 
 ### Configuration file
 
-Every flag can be prebaked in an optional `.ultra.toml` at the repo root, so you don't repeat `--secret-resolver`, `--region`, and friends on every invocation. Anything passed on the command line overrides the file. The file is split into a `[secrets]` section (the secret resolver and its own flags) and a `[config]` section (the config resolver), with shared flags at the top level:
+Every flag can be prebaked in an optional `.ultra.toml` at the repo root, so you don't repeat `--secret-resolver`, `--region`, and friends on every invocation. Anything passed on the command line overrides the file.
+
+The file mirrors the CLI's hierarchy. Shared flags sit at the top level. A `[secrets]` section picks the secret resolver, and that resolver's own flags live in a sub-table keyed by its name — exactly as `--secret-resolver aws-secret-manager` is followed by aws-secret-manager's own `--region`/`--profile` flags on the command line. `[config]` works the same way.
 
 ```toml
+# Shared flags live at the top level.
+root     = "."          # --root: repo root the compose file is anchored to
+apps-dir = "services"   # --apps-dir: directory holding each app's config package
+
 [secrets]
 resolver = "aws-secret-manager"   # --secret-resolver
-region   = "us-east-1"            # the resolver's own flag
+
+[secrets.aws-secret-manager]      # aws-secret-manager's own flags
+region  = "us-east-1"
+profile = "prod"
+prefix  = "prod"                  # leading segment before <app>/<NAME>
 
 [config]
 resolver = "docker-compose"       # --config-resolver
-
-apps-dir = "services"             # a shared flag (--apps-dir); omit to default to apps
 ```
 
-With that file in place, both commands shrink to:
+Only the selected resolver's sub-table is read, so you can keep several resolvers configured side by side and switch between them by changing one line. Swapping to 1Password is just:
+
+```toml
+[secrets]
+resolver = "1password"            # --secret-resolver
+
+[secrets.1password]
+vault = "Engineering"             # 1password's own flag
+```
+
+With a file in place, both commands shrink to:
 
 ```bash
 ultra run -- docker compose up

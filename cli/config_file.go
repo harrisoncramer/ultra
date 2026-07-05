@@ -14,11 +14,16 @@ import (
 // configFileName is the optional TOML file, read from the repo root, that
 // prebakes command-line flags. Anything passed on the command line overrides it.
 //
-// It is organized into sections mirroring the two resolver kinds:
+// It mirrors the CLI's hierarchy: a section picks a resolver, and that resolver's
+// own flags live in a sub-table keyed by the resolver's name, so flags never
+// leak across resolvers.
 //
 //	[secrets]
 //	resolver = "aws-secret-manager"   # --secret-resolver
-//	region   = "us-east-1"            # the resolver's own flag
+//
+//	[secrets.aws-secret-manager]      # aws-secret-manager's own flags
+//	region  = "us-east-1"
+//	profile = "prod"
 //
 //	[config]
 //	resolver = "docker-compose"       # --config-resolver
@@ -53,10 +58,11 @@ func loadConfig() (fileConfig, error) {
 	return flatten(v), nil
 }
 
-// flatten maps the sectioned TOML onto flag names: [secrets].resolver becomes
-// --secret-resolver, [config].resolver becomes --config-resolver, every other key
-// in a section maps to the resolver flag of the same name (region, vault, …), and
-// top-level scalar keys map to the shared flags (root, apps-dir).
+// flatten maps the hierarchical TOML onto flag names: top-level scalar keys map
+// to the shared flags (root, apps-dir), [secrets].resolver picks --secret-resolver
+// and [secrets.<resolver>] holds that resolver's own flags, and likewise for
+// [config]. Only the selected resolver's sub-table is read, so flags for other
+// resolvers are ignored rather than colliding.
 func flatten(v *viper.Viper) fileConfig {
 	fc := fileConfig{}
 	for k, val := range v.AllSettings() {
@@ -65,23 +71,33 @@ func flatten(v *viper.Viper) fileConfig {
 		}
 		fc[k] = fmt.Sprint(val)
 	}
+	fc.applySection(v, "secrets", "secret-resolver")
+	fc.applySection(v, "config", "config-resolver")
+	return fc
+}
 
-	section := func(name, resolverFlag string) {
-		sub := v.Sub(name)
-		if sub == nil {
-			return
-		}
-		for k, val := range sub.AllSettings() {
-			if k == "resolver" {
-				fc[resolverFlag] = fmt.Sprint(val)
-				continue
-			}
+// applySection records the resolver chosen for a section and copies that
+// resolver's own flags out of its name-keyed sub-table. The command line wins
+// over the file when picking which resolver — and therefore which sub-table — to
+// read, so an override still gets its matching defaults.
+func (fc fileConfig) applySection(v *viper.Viper, section, resolverFlag string) {
+	sub := v.Sub(section)
+	if sub == nil {
+		return
+	}
+	name := rawFlagValue(os.Args, resolverFlag)
+	if name == "" {
+		name = sub.GetString("resolver")
+	}
+	if name == "" {
+		return
+	}
+	fc[resolverFlag] = name
+	if rs := sub.Sub(name); rs != nil {
+		for k, val := range rs.AllSettings() {
 			fc[k] = fmt.Sprint(val)
 		}
 	}
-	section("secrets", "secret-resolver")
-	section("config", "config-resolver")
-	return fc
 }
 
 // effective returns the value for a flag before cobra has parsed: the command
