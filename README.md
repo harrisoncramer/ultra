@@ -8,7 +8,7 @@ NOTE: This project is in alpha and subject to breaking changes.
 
 ## How it works
 
-All secrets start in a secret store (1Password, AWS Secrets Manager), and must end up as an environment variable inside a running container. This is what `ultra` helps with.
+All secrets start in a secret store (1Password, AWS SSM Parameter Store), and must end up as an environment variable inside a running container. This is what `ultra` helps with.
 
 There are two parts of the ultra package. 
 
@@ -53,7 +53,7 @@ if err != nil {
 fmt.Println("The Google Client ID is: %s", cfg.Google.ClientID)
 ```
 
-This configuration object is resolved by the `ultra` CLI tool, which supports different secret resolvers: 1Password, AWS Secret Manager, or a custom secret resolver. 
+This configuration object is resolved by the `ultra` CLI tool, which supports different secret resolvers: 1Password, AWS SSM Parameter Store, or a custom secret resolver. 
 
 Secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container automatically. The docker compose for the above configuration would look like this:
 
