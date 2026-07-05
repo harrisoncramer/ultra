@@ -1,0 +1,8 @@
+[env]
+# Install `go install`ed binaries (ultra itself) to a stable, always-on-PATH
+# location during local development, instead of mise's version-scoped go bindir.
+GOBIN = "{{env.HOME}}/go/bin"
+
+[tasks.install]
+description = "Build and install the ultra CLI to GOBIN"
+run = "go install ./cmd/ultra"
