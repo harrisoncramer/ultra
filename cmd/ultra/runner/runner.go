@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	compose "github.com/harrisoncramer/ultra/pkg/compose"
-	"github.com/harrisoncramer/ultra/pkg/resolvers"
 	"github.com/harrisoncramer/ultra/pkg/secrets"
 )
 
@@ -22,7 +21,7 @@ import (
 type Params struct {
 	Root        string
 	AppsDir     string
-	ResolverFor func(app string) resolvers.Resolver
+	ResolverFor func(app string) Resolver
 	Command     []string
 }
 
