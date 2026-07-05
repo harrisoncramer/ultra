@@ -1,0 +1,4 @@
+/tmp
+tmp/
+*.local
+.DS_Store
