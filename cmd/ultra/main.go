@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/harrisoncramer/ultra"
+	compose "github.com/harrisoncramer/ultra/compose"
 	"github.com/harrisoncramer/ultra/resolvers"
 
 	"github.com/spf13/cobra"
@@ -124,7 +125,7 @@ func run(ctx context.Context, p runParams) error {
 		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(override, []byte(ultra.ComposeOverride(app, names)), 0o644); err != nil {
+		if err := os.WriteFile(override, []byte(compose.ComposeOverride(app, names)), 0o644); err != nil {
 			return err
 		}
 		composeFiles = append(composeFiles, override)
@@ -139,7 +140,7 @@ func run(ctx context.Context, p runParams) error {
 		// name (e.g. DATABASE_URL) never collide in this shared environment. The
 		// override maps the real name back per container via interpolation.
 		for name, val := range values {
-			env = append(env, ultra.ComposeVar(app, name)+"="+val)
+			env = append(env, compose.ComposeVar(app, name)+"="+val)
 		}
 		fmt.Fprintf(os.Stderr, "ultra: resolved %d/%d secrets for %s\n", len(values), len(names), app)
 	}

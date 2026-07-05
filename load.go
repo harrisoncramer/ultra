@@ -1,5 +1,3 @@
-// Package ultra wires the secrets an app declares in its typed config struct
-// (via `secret:"true"` tags) through a swappable resolver into the environment.
 package ultra
 
 import (
@@ -7,9 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
-	"strings"
 
 	"github.com/caarlos0/env/v10"
+	secrets "github.com/harrisoncramer/ultra/secrets"
 )
 
 // Load parses T from the environment, returning an error if anything required is
@@ -22,7 +20,7 @@ import (
 func Load[T any]() (T, error) {
 	var cfg T
 
-	for _, name := range secretEnvNames(reflect.TypeFor[T]()) {
+	for _, name := range secrets.SecretEnvNames(reflect.TypeFor[T]()) {
 		if os.Getenv(name) == "" {
 			slog.Warn("secret not present in environment", "name", name)
 		}
@@ -32,43 +30,4 @@ func Load[T any]() (T, error) {
 		return cfg, fmt.Errorf("failed to load config: %w", err)
 	}
 	return cfg, nil
-}
-
-// secretEnvNames reflects over t and returns the env-var names of every field
-// tagged `secret:"true"`, following embedded and nested structs like env.Parse
-// does.
-func secretEnvNames(t reflect.Type) []string {
-	var names []string
-	seen := map[string]struct{}{}
-	visited := map[reflect.Type]bool{}
-
-	var visit func(t reflect.Type)
-	visit = func(t reflect.Type) {
-		if t.Kind() == reflect.Pointer {
-			t = t.Elem()
-		}
-		if t.Kind() != reflect.Struct || visited[t] {
-			return
-		}
-		visited[t] = true
-		for i := 0; i < t.NumField(); i++ {
-			f := t.Field(i)
-			visit(f.Type)
-			if f.Tag.Get("secret") != "true" {
-				continue
-			}
-			name, _, _ := strings.Cut(f.Tag.Get("env"), ",") // "NAME,required" -> "NAME"
-			if name == "" {
-				continue
-			}
-			if _, dup := seen[name]; dup {
-				continue
-			}
-			seen[name] = struct{}{}
-			names = append(names, name)
-		}
-	}
-	visit(t)
-
-	return names
 }

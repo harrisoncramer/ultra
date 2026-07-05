@@ -1,19 +1,17 @@
-package ultra_test
+package secrets
 
 import (
 	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
-
-	"github.com/harrisoncramer/ultra"
 )
 
 // sortedNames scans a fixture package under testdata and returns its secret env
 // names sorted for stable comparison.
 func sortedNames(t *testing.T, fixture string) []string {
 	t.Helper()
-	got, err := ultra.SecretNames(filepath.Join("testdata", "scan", fixture))
+	got, err := SecretNames(filepath.Join("testdata", "scan", fixture))
 	if err != nil {
 		t.Fatalf("SecretNames(%s): %v", fixture, err)
 	}
@@ -40,7 +38,7 @@ func TestSecretNamesCrossPackage(t *testing.T) {
 }
 
 func TestSecretNamesNoConfig(t *testing.T) {
-	if _, err := ultra.SecretNames(filepath.Join("testdata", "scan", "noconfig")); err == nil {
+	if _, err := SecretNames(filepath.Join("testdata", "scan", "noconfig")); err == nil {
 		t.Fatal("expected error for a package without an exported Config struct")
 	}
 }

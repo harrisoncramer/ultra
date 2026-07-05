@@ -1,4 +1,4 @@
-package ultra
+package secrets
 
 import (
 	"fmt"
@@ -90,4 +90,43 @@ func structUnder(t types.Type) *types.Struct {
 	default:
 		return nil
 	}
+}
+
+// secretEnvNames reflects over t and returns the env-var names of every field
+// tagged `secret:"true"`, following embedded and nested structs like env.Parse
+// does.
+func SecretEnvNames(t reflect.Type) []string {
+	var names []string
+	seen := map[string]struct{}{}
+	visited := map[reflect.Type]bool{}
+
+	var visit func(t reflect.Type)
+	visit = func(t reflect.Type) {
+		if t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct || visited[t] {
+			return
+		}
+		visited[t] = true
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			visit(f.Type)
+			if f.Tag.Get("secret") != "true" {
+				continue
+			}
+			name, _, _ := strings.Cut(f.Tag.Get("env"), ",") // "NAME,required" -> "NAME"
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+	visit(t)
+
+	return names
 }

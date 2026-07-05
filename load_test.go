@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	secrets "github.com/harrisoncramer/ultra/secrets"
 )
 
 type nestedSecrets struct {
@@ -26,7 +28,7 @@ type composedConfig struct {
 }
 
 func TestSecretEnvNamesRecurses(t *testing.T) {
-	got := secretEnvNames(reflect.TypeFor[composedConfig]())
+	got := secrets.SecretEnvNames(reflect.TypeFor[composedConfig]())
 	sort.Strings(got)
 	want := []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"} // B_TOKEN deduped across Extra + Ptr
 	if len(got) != len(want) {
