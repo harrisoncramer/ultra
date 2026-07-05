@@ -1,8 +1,5 @@
 // Package ultra wires the secrets an app declares in its typed config struct
-// (via `secret:"true"` tags) through a swappable resolver into the environment —
-// locally for docker-compose development without ever writing them to disk, and
-// in production via whatever the deploy platform injects. The config struct is
-// the single source of truth for which secrets an app needs.
+// (via `secret:"true"` tags) through a swappable resolver into the environment.
 package ultra
 
 import (
@@ -17,7 +14,7 @@ import (
 
 // Load parses T from the environment, returning an error if anything required is
 // missing or malformed. Apps depend on this instead of the env library directly,
-// so config parsing — and the underlying dependency — is controlled in one place.
+// so config parsing, and the underlying dependency, is controlled in one place.
 //
 // This is where secrets are actually read into the process, so it is also where
 // a missing secret is reported: every field tagged `secret:"true"` whose env var

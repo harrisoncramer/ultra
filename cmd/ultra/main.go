@@ -1,18 +1,8 @@
-// Command ultra wires every app's secrets — declared in each app's config.go via
-// `secret:"true"` tags — into local docker-compose development, without ever
-// writing secret values to disk.
-//
-//	ultra run -- docker compose up ...
-//
-// For every app under apps/ that declares secrets it: generates a names-only
-// compose override that forwards those env vars into the container, resolves the
-// values via the chosen resolver in memory, points compose at the overrides via
-// COMPOSE_FILE, and execs the given command with the secrets in its environment.
-//
-// The resolver is swappable (1Password now, others behind the same interface),
-// so where secrets come from is a local-dev detail. In production the deploy
-// platform injects the same env vars; nothing here runs there. Each app's
-// config.go is the single source of truth for which secrets it needs.
+// The resolver is a required subcommand of run (for example `1password`) and
+// carries its own flags. For every app under the apps directory it: generates a
+// names-only compose override that forwards those env vars into the container,
+// resolves the values via the chosen resolver in memory, points compose at the
+// overrides via COMPOSE_FILE, and execs the given command.
 package main
 
 import (
@@ -24,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/harrisoncramer/ultra"
+	"github.com/harrisoncramer/ultra/resolvers"
 
 	"github.com/spf13/cobra"
 )
@@ -45,67 +36,74 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
+// sharedFlags are the flags every resolver subcommand inherits from run.
+type sharedFlags struct {
+	root    string
+	appsDir string
+}
+
 func newRunCmd() *cobra.Command {
-	var root, resolverKind, vault string
+	shared := &sharedFlags{}
 
 	cmd := &cobra.Command{
-		Use:   "run -- <command>...",
-		Short: "Resolve every app's secrets and exec the command with them (e.g. docker compose up)",
-		Long: "run discovers every app under apps/, generates a compose override forwarding\n" +
-			"each app's secret env vars, resolves the values via the chosen resolver in\n" +
-			"memory, and execs the given command with the secrets in its environment and\n" +
-			"COMPOSE_FILE pointed at the overrides. No secret is ever written to disk.",
-		Args: cobra.MinimumNArgs(1),
+		Use:   "run <resolver> [flags] -- <command>...",
+		Short: "Resolve every app's secrets with a resolver and exec the command",
+		Long: "run takes a resolver as its subcommand (for example 1password), discovers\n" +
+			"every app under the apps directory, resolves each app's secrets via that\n" +
+			"resolver in memory, forwards them into that app's container through a generated\n" +
+			"compose override, and execs the given command. No secret is written to disk.",
+	}
+
+	cmd.PersistentFlags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
+	cmd.PersistentFlags().StringVar(&shared.appsDir, "apps-dir", "apps", "directory under --root holding each app's config package")
+
+	cmd.AddCommand(newOnePasswordCmd(shared))
+	return cmd
+}
+
+func newOnePasswordCmd(shared *sharedFlags) *cobra.Command {
+	var vault string
+
+	cmd := &cobra.Command{
+		Use:   "1password --vault <vault> -- <command>...",
+		Short: "Resolve secrets from 1Password via the op CLI",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dash := cmd.ArgsLenAtDash()
 			if dash < 0 || dash >= len(args) {
-				return fmt.Errorf("usage: ultra run -- <command>...")
+				return fmt.Errorf("usage: ultra run 1password --vault <vault> -- <command>")
+			}
+			if vault == "" {
+				return fmt.Errorf("1password requires --vault")
+			}
+			resolverFor := func(app string) resolvers.Resolver {
+				return resolvers.NewOnePasswordSecretResolver(resolvers.NewOnePasswordSecretResolverParams{
+					Vault: vault,
+					Item:  app,
+				})
 			}
 			return run(cmd.Context(), runParams{
-				root:         root,
-				resolverKind: resolverKind,
-				vault:        vault,
-				command:      args[dash:],
+				root:        shared.root,
+				appsDir:     shared.appsDir,
+				resolverFor: resolverFor,
+				command:     args[dash:],
 			})
 		},
 	}
 
-	cmd.Flags().StringVar(&root, "root", ".", "repo root containing apps/<app>")
-	cmd.Flags().StringVar(&resolverKind, "resolver", "1password", "secret resolver backend: "+strings.Join(resolverKinds, ", "))
-	cmd.Flags().StringVar(&vault, "onepassword-vault", "", "1password vault holding the secrets (required for the 1password resolver)")
+	cmd.Flags().StringVar(&vault, "vault", "", "1password vault holding the secrets (required)")
 	return cmd
 }
 
-// resolverKinds lists the resolver backends the --resolver flag accepts.
-var resolverKinds = []string{"1password"}
-
-// newResolver builds the secret resolver named by kind for one app. Backend
-// naming (which vault) is passed in; the app's secrets live in a vault item
-// named after the app.
-func newResolver(kind, vault, app string) (ultra.Resolver, error) {
-	switch kind {
-	case "1password":
-		if vault == "" {
-			return nil, fmt.Errorf("the 1password resolver requires --onepassword-vault")
-		}
-		return ultra.NewOnePasswordSecretResolver(ultra.NewOnePasswordSecretResolverParams{
-			Vault: vault,
-			Item:  app,
-		}), nil
-	default:
-		return nil, fmt.Errorf("unknown resolver %q (valid: %s)", kind, strings.Join(resolverKinds, ", "))
-	}
-}
-
 type runParams struct {
-	root         string
-	resolverKind string
-	vault        string
-	command      []string
+	root        string
+	appsDir     string
+	resolverFor func(app string) resolvers.Resolver
+	command     []string
 }
 
 func run(ctx context.Context, p runParams) error {
-	apps, err := discoverApps(p.root)
+	apps, err := discoverApps(p.root, p.appsDir)
 	if err != nil {
 		return err
 	}
@@ -114,7 +112,7 @@ func run(ctx context.Context, p runParams) error {
 	composeFiles := []string{filepath.Join(p.root, "docker-compose.yml")}
 
 	for _, app := range apps {
-		names, err := ultra.SecretNames(configDir(p.root, app))
+		names, err := ultra.SecretNames(configDir(p.root, p.appsDir, app))
 		if err != nil {
 			return fmt.Errorf("reading %s config: %w", app, err)
 		}
@@ -131,14 +129,9 @@ func run(ctx context.Context, p runParams) error {
 		}
 		composeFiles = append(composeFiles, override)
 
-		resolver, err := newResolver(p.resolverKind, p.vault, app)
-		if err != nil {
-			return err
-		}
 		// One round-trip per app. A missing vault/item is fatal here; a missing
-		// individual secret is not — that is surfaced by config.Load in the app,
-		// the place the secret is actually read into the process.
-		values, err := resolver.Resolve(ctx, names)
+		// individual secret is not.
+		values, err := p.resolverFor(app).Resolve(ctx, names)
 		if err != nil {
 			return err
 		}
@@ -165,25 +158,26 @@ func run(ctx context.Context, p runParams) error {
 	return c.Run()
 }
 
-// discoverApps returns the names of every directory under <root>/apps that has a
-// config package.
-func discoverApps(root string) ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(root, "apps"))
+// discoverApps returns the names of every directory under <root>/<appsDir> that
+// has a config package.
+func discoverApps(root, appsDir string) ([]string, error) {
+	dir := filepath.Join(root, appsDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("listing apps: %w", err)
+		return nil, fmt.Errorf("listing apps in %s: %w", dir, err)
 	}
 	var apps []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		if info, err := os.Stat(configDir(root, e.Name())); err == nil && info.IsDir() {
+		if info, err := os.Stat(configDir(root, appsDir, e.Name())); err == nil && info.IsDir() {
 			apps = append(apps, e.Name())
 		}
 	}
 	return apps, nil
 }
 
-func configDir(root, app string) string {
-	return filepath.Join(root, "apps", app, "config")
+func configDir(root, appsDir, app string) string {
+	return filepath.Join(root, appsDir, app, "config")
 }

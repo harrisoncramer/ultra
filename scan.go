@@ -10,9 +10,8 @@ import (
 )
 
 // SecretNames type-checks the Go package at dir and returns the env-var names of
-// every field tagged `secret:"true"` reachable from its exported Config struct —
-// the values a Resolver must supply. Because it works from full type
-// information, it follows embedded and nested struct fields wherever they're
+// every field tagged `secret:"true"` reachable from its exported Config struct.
+// It follows embedded and nested struct fields wherever they're
 // defined, including sub-structs in other packages. It fails if the package has
 // no exported Config struct.
 func SecretNames(dir string) ([]string, error) {
@@ -78,8 +77,8 @@ func SecretNames(dir string) ([]string, error) {
 	return names, nil
 }
 
-// structUnder resolves t to the struct it ultimately is — dereferencing pointers
-// and named types — or returns nil if t is not a struct.
+// structUnder resolves t to the struct it ultimately is, dereferencing pointers
+// and named types, or returns nil if t is not a struct.
 func structUnder(t types.Type) *types.Struct {
 	switch u := t.(type) {
 	case *types.Pointer:

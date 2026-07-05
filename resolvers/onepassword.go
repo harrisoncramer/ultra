@@ -1,4 +1,4 @@
-package ultra
+package resolvers
 
 import (
 	"bytes"

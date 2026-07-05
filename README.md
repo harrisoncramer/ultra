@@ -1,6 +1,6 @@
 # ultra
 
-The `ultra` package takes an opinionated, Go-native approach toward configuration management with docker and docker compose. 
+The `ultra` package takes an opinionated, Go-native approach toward configuration management.
 
 It handles the injection of secrets into containers automatically. Define your app's configuration once, and let Ultra do the rest.
 
@@ -64,17 +64,17 @@ services:
     environment:
       LOG_LEVEL: info
       # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, and
-      # DATABASE_URL are secrets; omit them here — ultra resolves and injects
+      # DATABASE_URL are secrets; omit them here; ultra resolves and injects
       # them at run time.
 ```
 
 Finally, run all Docker commands through the `ultra` CLI, so the app's secrets are present in its environment:
 
 ```
-ultra run --onepassword-vault MyVault -- docker compose up
+ultra run 1password --vault MyVault -- docker compose up
 ```
 
-The CLI discovers every app under the apps directory — `apps/` by default, configurable with `--apps-dir` — reads each app's `config` package, resolves its secrets from the provider, and forwards them into that app's container.
+The resolver is a required subcommand of `run` and carries its own flags, such as `--vault`. The CLI discovers every app under the apps directory (`apps/` by default, configurable with `--apps-dir`), reads each app's `config` package, resolves its secrets from that resolver, and forwards them into that app's container.
 
 ## Secret Providers
 
@@ -86,6 +86,12 @@ type Resolver interface {
 }
 ```
 
-The ultra package ships with a 1Password provider, used by default
+Each resolver is exposed as a subcommand of `run` with its own flags. ultra ships with the `1password` resolver, which reads each app's secrets from a vault item named after the app, one field per secret name, through the `op` CLI:
 
-Additional stores fit behind the same interface. Implementing `Resolver` for a service such as AWS Secrets Manager is all that a new backend requires.
+```
+ultra run 1password --vault MyVault -- docker compose up
+```
+
+A missing vault or item is fatal. A missing individual field is not fatal here, it is reported when `config.Load` runs in the app, since that is where the value is actually read.
+
+Additional stores fit behind the same interface. Implementing `Resolver` for a service such as AWS Secrets Manager, then exposing it as another `run` subcommand, is all that a new backend requires.
