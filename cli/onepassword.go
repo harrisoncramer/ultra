@@ -12,13 +12,13 @@ import (
 )
 
 func init() {
-	RegisterResolver(ResolverCommand{
+	RegisterSecretResolver(SecretResolverCommand{
 		Name:  "1password",
 		Short: "Resolve secrets from 1Password via the op CLI",
-		Setup: func(fs *pflag.FlagSet) func(app string) Resolver {
+		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
 			var vault string
 			fs.StringVar(&vault, "vault", "", "1password vault holding the secrets (required)")
-			return func(app string) Resolver {
+			return func(app string) SecretResolver {
 				return onePassword{vault: vault, item: app}
 			}
 		},

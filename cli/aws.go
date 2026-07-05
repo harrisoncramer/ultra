@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	RegisterResolver(ResolverCommand{
+	RegisterSecretResolver(SecretResolverCommand{
 		Name:  "aws-secret-manager",
 		Short: "Resolve secrets from AWS Secrets Manager via the aws CLI",
 		Long: "aws-secret-manager reads each app's secrets from AWS Secrets Manager, one\n" +
@@ -21,11 +21,11 @@ func init() {
 			"Pass --prefix to add a leading segment, e.g. --prefix prod gives\n" +
 			"'prod/worker/GOOGLE_CLIENT_ID'. All of an app's secrets are fetched in one\n" +
 			"batch-get-secret-value call using your local AWS credentials.",
-		Setup: func(fs *pflag.FlagSet) func(app string) Resolver {
+		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
 			var region, prefix string
 			fs.StringVar(&region, "region", "", "AWS region (defaults to the aws CLI's configured region)")
 			fs.StringVar(&prefix, "prefix", "", "path segment prepended before the app, e.g. an environment name")
-			return func(app string) Resolver {
+			return func(app string) SecretResolver {
 				return awsSecretsManager{app: app, prefix: prefix, region: region}
 			}
 		},

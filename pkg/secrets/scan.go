@@ -77,6 +77,18 @@ func SecretNames(dir string) ([]string, error) {
 	return names, nil
 }
 
+// ConfigImportPath returns the import path of the Go package at dir, so a generated program can import it and call its Load.
+func ConfigImportPath(dir string) (string, error) {
+	pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedName, Dir: dir}, ".")
+	if err != nil {
+		return "", fmt.Errorf("loading config package at %s: %w", dir, err)
+	}
+	if len(pkgs) == 0 || pkgs[0].PkgPath == "" {
+		return "", fmt.Errorf("no Go package at %s", dir)
+	}
+	return pkgs[0].PkgPath, nil
+}
+
 // structUnder resolves t to the struct it ultimately is, dereferencing pointers
 // and named types, or returns nil if t is not a struct.
 func structUnder(t types.Type) *types.Struct {
@@ -92,7 +104,7 @@ func structUnder(t types.Type) *types.Struct {
 	}
 }
 
-// secretEnvNames reflects over t and returns the env-var names of every field
+// SecretEnvNames reflects over t and returns the env-var names of every field
 // tagged `secret:"true"`, following embedded and nested structs like env.Parse
 // does.
 func SecretEnvNames(t reflect.Type) []string {
@@ -115,7 +127,7 @@ func SecretEnvNames(t reflect.Type) []string {
 			if f.Tag.Get("secret") != "true" {
 				continue
 			}
-			name, _, _ := strings.Cut(f.Tag.Get("env"), ",") // "NAME,required" -> "NAME"
+			name, _, _ := strings.Cut(f.Tag.Get("env"), ",")
 			if name == "" {
 				continue
 			}

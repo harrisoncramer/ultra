@@ -11,7 +11,7 @@ import (
 // names sorted for stable comparison.
 func sortedNames(t *testing.T, fixture string) []string {
 	t.Helper()
-	got, err := SecretNames(filepath.Join("testdata", "scan", fixture))
+	got, err := SecretNames(filepath.Join("..", "testdata", "scan", fixture))
 	if err != nil {
 		t.Fatalf("SecretNames(%s): %v", fixture, err)
 	}
@@ -38,7 +38,17 @@ func TestSecretNamesCrossPackage(t *testing.T) {
 }
 
 func TestSecretNamesNoConfig(t *testing.T) {
-	if _, err := SecretNames(filepath.Join("testdata", "scan", "noconfig")); err == nil {
+	if _, err := SecretNames(filepath.Join("..", "testdata", "scan", "noconfig")); err == nil {
 		t.Fatal("expected error for a package without an exported Config struct")
+	}
+}
+
+func TestConfigImportPath(t *testing.T) {
+	got, err := ConfigImportPath(filepath.Join("..", "testdata", "scan", "flat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "github.com/harrisoncramer/ultra/pkg/testdata/scan/flat"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

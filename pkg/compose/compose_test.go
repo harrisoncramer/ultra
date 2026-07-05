@@ -1,14 +1,12 @@
 package ultra_test
 
 import (
-	_ "embed"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/harrisoncramer/ultra"
+	compose "github.com/harrisoncramer/ultra/pkg/compose"
 )
-
-//go:embed testdata/worker_override.golden
-var workerOverrideGolden string
 
 func TestComposeVar(t *testing.T) {
 	cases := []struct {
@@ -19,7 +17,7 @@ func TestComposeVar(t *testing.T) {
 		{"dafpay-network", "API_KEY", "ULTRA_DAFPAY_NETWORK__API_KEY"},
 	}
 	for _, c := range cases {
-		if got := ultra.ComposeVar(c.app, c.name); got != c.want {
+		if got := compose.ComposeVar(c.app, c.name); got != c.want {
 			t.Errorf("ComposeVar(%q, %q) = %q, want %q", c.app, c.name, got, c.want)
 		}
 	}
@@ -27,14 +25,18 @@ func TestComposeVar(t *testing.T) {
 
 func TestComposeVarNoCollisionAcrossApps(t *testing.T) {
 	// The same secret name in two apps must map to distinct launcher variables.
-	if a, b := ultra.ComposeVar("worker", "DATABASE_URL"), ultra.ComposeVar("server", "DATABASE_URL"); a == b {
+	if a, b := compose.ComposeVar("worker", "DATABASE_URL"), compose.ComposeVar("server", "DATABASE_URL"); a == b {
 		t.Fatalf("expected distinct vars for the same name in different apps, both were %q", a)
 	}
 }
 
 func TestComposeOverride(t *testing.T) {
-	got := ultra.ComposeOverride("worker", []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"})
-	if got != workerOverrideGolden {
-		t.Errorf("ComposeOverride mismatch:\n got: %q\nwant: %q", got, workerOverrideGolden)
+	want, err := os.ReadFile(filepath.Join("..", "testdata", "worker_override.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := compose.ComposeOverride("worker", []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"})
+	if got != string(want) {
+		t.Errorf("ComposeOverride mismatch:\n got: %q\nwant: %q", got, string(want))
 	}
 }
