@@ -71,10 +71,10 @@ services:
 Finally, run all Docker commands through the `ultra` CLI, so the app's secrets are present in its environment:
 
 ```
-ultra run 1password --vault MyVault -- docker compose up
+ultra run --secret-resolver 1password --vault MyVault -- docker compose up
 ```
 
-The Ultra CLI will automatically discover every app under the apps directory (`apps/` by default), reads each app's `config` package, resolve it's secrets via your resolver, and forward them into the container.
+The Ultra CLI automatically discovers every app under the apps directory (`apps/` by default), reads each app's `config` package, resolves its secrets via your secret resolver, and forwards them into the container.
 
 ## Resolvers
 
@@ -90,11 +90,11 @@ type ConfigResolver interface {
 }
 ```
 
-Each secret resolver is exposed as a subcommand of `run` and `validate`, with its own flags:
+The secret resolver is chosen with `--secret-resolver`, mirroring `--config-resolver`; the selected resolver's own flags (like `--vault`) become available:
 
 ```bash
-ultra run 1password --vault MyVault -- docker compose up
-ultra run aws-secret-manager --region us-east-1 -- docker compose up
+ultra run --secret-resolver 1password --vault MyVault -- docker compose up
+ultra run --secret-resolver aws-secret-manager --region us-east-1 -- docker compose up
 ```
 
 At runtime `run` doesn't need a config resolver — docker-compose (dev) and your platform (prod) inject the non-secret values into the container directly. The config resolver exists for `validate`, which has to reconstruct that environment itself.
@@ -104,14 +104,14 @@ At runtime `run` doesn't need a config resolver — docker-compose (dev) and you
 `ultra validate` takes the same secret resolver and flags as `run` and resolves secrets the same way, but instead of starting containers it checks that every app's `config.Load` succeeds. It validates against the full environment the container would boot with: the app's non-secret config from a config resolver (`--config-resolver`, `docker-compose` by default) plus the resolved secrets. It exits non-zero if any app is missing a required value or won't parse.
 
 ```bash
-ultra validate aws-secret-manager --region us-east-1
+ultra validate --secret-resolver aws-secret-manager --region us-east-1
 ```
 
 Use it to fail fast before `docker compose up`, or to gate a deploy. In a running container or pod, where the non-secret values are already in the environment, use `--config-resolver env`.
 
 ### Writing a custom secret resolver
 
-You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a secret resolver, and call `cli.Execute` from your own `main` — the built-in resolvers come along, and yours becomes another `run`/`validate` subcommand.
+You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a secret resolver, and call `cli.Execute` from your own `main` — the built-in resolvers come along, and yours becomes another `--secret-resolver` choice.
 
 A secret resolver is any type with a `Resolve` method. `Setup` binds the resolver's flags and returns a factory that builds a resolver per app once those flags are parsed.
 
@@ -160,4 +160,28 @@ func (v vaultResolver) Resolve(ctx context.Context, names []string) (map[string]
 }
 ```
 
-Build that `main` (`go install .`) and run it in place of the stock ultra binary. `ultra run vault --addr … -- docker compose up` resolves through your store, and `1password` and `aws` still work. The CLI handles discovery, overrides, namespacing, and exec — your resolver only fetches values.
+Build that `main` (`go install .`) and run it in place of the stock ultra binary. `ultra run --secret-resolver vault --addr … -- docker compose up` resolves through your store, and the built-in resolvers still work. The CLI handles discovery, overrides, namespacing, and exec — your resolver only fetches values.
+
+### Writing a custom config resolver
+
+Config resolvers are pluggable the same way, for when `validate` needs to read non-secret config from a source ultra doesn't ship — your Kubernetes manifests, for instance. Register one with `cli.RegisterConfigResolver` and select it with `--config-resolver`:
+
+```go
+cli.RegisterConfigResolver(cli.ConfigResolverCommand{
+	Name:  "k8s",
+	Short: "Read non-secret config from Kubernetes manifests",
+	New: func(root string) (cli.ConfigResolver, error) {
+		return k8sConfig{root: root}, nil
+	},
+})
+
+// k8sConfig reads an app's non-secret environment from wherever your config lives.
+type k8sConfig struct{ root string }
+
+func (k k8sConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
+	// return app's non-secret environment (name -> value)
+	return nil, nil
+}
+```
+
+Then `ultra validate <secret-resolver> --config-resolver k8s` validates against that source. ultra ships `docker-compose` and `env`; anything platform-specific is a custom config resolver you register, exactly like a custom secret resolver.
