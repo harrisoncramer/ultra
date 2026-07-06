@@ -14,7 +14,7 @@ import (
 
 type validateParams struct {
 	root           string
-	appsDir        string
+	apps           []string
 	secretResolver func(app string) SecretResolver
 	configResolver ConfigResolver
 }
@@ -24,14 +24,10 @@ type validateParams struct {
 // resolver — and runs the app's own config.Load against it, so caarlos0/env does
 // the checking. It reports each app and exits non-zero if any fail.
 func validate(ctx context.Context, p validateParams) error {
-	apps, err := discoverApps(p.root, p.appsDir)
-	if err != nil {
-		return err
-	}
-
 	failed := 0
-	for _, app := range apps {
-		if err := validateApp(ctx, p, app); err != nil {
+	for _, appPath := range p.apps {
+		app := appName(appPath)
+		if err := validateApp(ctx, p, appPath); err != nil {
 			failed++
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, err)
 		} else {
@@ -44,8 +40,9 @@ func validate(ctx context.Context, p validateParams) error {
 	return nil
 }
 
-func validateApp(ctx context.Context, p validateParams, app string) error {
-	dir := configDir(p.root, p.appsDir, app)
+func validateApp(ctx context.Context, p validateParams, appPath string) error {
+	app := appName(appPath)
+	dir := appConfigDir(p.root, appPath)
 	importPath, err := secrets.ConfigImportPath(dir)
 	if err != nil {
 		return err

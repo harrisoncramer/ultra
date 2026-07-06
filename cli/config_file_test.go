@@ -43,11 +43,28 @@ resolver = "docker-compose"
 		"region":          "us-east-1",
 		"profile":         "prod",
 		"config-resolver": "docker-compose",
-		"apps-dir":        "services",
 	}
 	for flag, want := range cases {
-		if got := fc[flag]; got != want {
-			t.Errorf("fc[%q] = %q, want %q", flag, got, want)
+		if got := fc.flags[flag]; got != want {
+			t.Errorf("fc.flags[%q] = %q, want %q", flag, got, want)
+		}
+	}
+}
+
+func TestFlattenApps(t *testing.T) {
+	fc := loadFrom(t, `
+apps = ["apps/server", "apps/worker"]
+
+[secrets]
+resolver = "1password"
+`)
+	want := []string{"apps/server", "apps/worker"}
+	if len(fc.apps) != len(want) {
+		t.Fatalf("apps = %v, want %v", fc.apps, want)
+	}
+	for i, a := range want {
+		if fc.apps[i] != a {
+			t.Errorf("apps[%d] = %q, want %q", i, fc.apps[i], a)
 		}
 	}
 }
@@ -64,11 +81,11 @@ region = "us-east-1"
 [secrets.1password]
 vault = "Engineering"
 `)
-	if _, ok := fc["vault"]; ok {
-		t.Errorf("vault leaked from unselected 1password sub-table: %v", fc)
+	if _, ok := fc.flags["vault"]; ok {
+		t.Errorf("vault leaked from unselected 1password sub-table: %v", fc.flags)
 	}
-	if fc["region"] != "us-east-1" {
-		t.Errorf("region = %q, want us-east-1", fc["region"])
+	if fc.flags["region"] != "us-east-1" {
+		t.Errorf("region = %q, want us-east-1", fc.flags["region"])
 	}
 }
 
@@ -124,7 +141,7 @@ func TestLoadConfigMissingFileIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if len(fc) != 0 {
-		t.Errorf("expected empty config for a missing file, got %v", fc)
+	if len(fc.flags) != 0 || len(fc.apps) != 0 {
+		t.Errorf("expected empty config for a missing file, got %+v", fc)
 	}
 }

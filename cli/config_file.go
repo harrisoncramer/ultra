@@ -32,9 +32,14 @@ import (
 //	apps-dir = "services"             # --apps-dir
 const configFileName = ".ultra.toml"
 
-// fileConfig holds the flag defaults read from .ultra.toml, keyed by flag name
-// (for example "secret-resolver", "region"). It is empty when no file exists.
-type fileConfig map[string]string
+// fileConfig holds the defaults read from .ultra.toml: flag values keyed by flag
+// name (for example "secret-resolver", "region"), plus the default list of app
+// paths to operate on when none are passed on the command line. Both are empty
+// when no file exists.
+type fileConfig struct {
+	flags map[string]string
+	apps  []string
+}
 
 // loadConfig reads .ultra.toml from the repo root and flattens its sections into
 // flag defaults. The root is located via a raw scan for --root, defaulting to the
@@ -53,7 +58,7 @@ func loadConfig() (fileConfig, error) {
 		if errors.As(err, &notFound) || errors.Is(err, os.ErrNotExist) {
 			return fileConfig{}, nil
 		}
-		return nil, fmt.Errorf("reading %s: %w", configFileName, err)
+		return fileConfig{}, fmt.Errorf("reading %s: %w", configFileName, err)
 	}
 	return flatten(v), nil
 }
@@ -64,23 +69,26 @@ func loadConfig() (fileConfig, error) {
 // [config]. Only the selected resolver's sub-table is read, so flags for other
 // resolvers are ignored rather than colliding.
 func flatten(v *viper.Viper) fileConfig {
-	fc := fileConfig{}
+	flags := map[string]string{}
 	for k, val := range v.AllSettings() {
+		if k == "apps" {
+			continue
+		}
 		if _, isSection := val.(map[string]any); isSection {
 			continue
 		}
-		fc[k] = fmt.Sprint(val)
+		flags[k] = fmt.Sprint(val)
 	}
-	fc.applySection(v, "secrets", "secret-resolver")
-	fc.applySection(v, "config", "config-resolver")
-	return fc
+	applySection(v, flags, "secrets", "secret-resolver")
+	applySection(v, flags, "config", "config-resolver")
+	return fileConfig{flags: flags, apps: v.GetStringSlice("apps")}
 }
 
 // applySection records the resolver chosen for a section and copies that
 // resolver's own flags out of its name-keyed sub-table. The command line wins
 // over the file when picking which resolver — and therefore which sub-table — to
 // read, so an override still gets its matching defaults.
-func (fc fileConfig) applySection(v *viper.Viper, section, resolverFlag string) {
+func applySection(v *viper.Viper, flags map[string]string, section, resolverFlag string) {
 	sub := v.Sub(section)
 	if sub == nil {
 		return
@@ -92,10 +100,10 @@ func (fc fileConfig) applySection(v *viper.Viper, section, resolverFlag string) 
 	if name == "" {
 		return
 	}
-	fc[resolverFlag] = name
+	flags[resolverFlag] = name
 	if rs := sub.Sub(name); rs != nil {
 		for k, val := range rs.AllSettings() {
-			fc[k] = fmt.Sprint(val)
+			flags[k] = fmt.Sprint(val)
 		}
 	}
 }
@@ -107,7 +115,7 @@ func (fc fileConfig) effective(name string) string {
 	if raw := rawFlagValue(os.Args, name); raw != "" {
 		return raw
 	}
-	return fc[name]
+	return fc.flags[name]
 }
 
 // applyConfigDefaults fills any flag the user did not pass on the command line
@@ -120,7 +128,7 @@ func applyConfigDefaults(cmd *cobra.Command, fc fileConfig) error {
 		if err != nil || f.Changed {
 			return
 		}
-		if v, ok := fc[f.Name]; ok {
+		if v, ok := fc.flags[f.Name]; ok {
 			if setErr := f.Value.Set(v); setErr != nil {
 				err = fmt.Errorf("%s from %s: %w", f.Name, configFileName, setErr)
 			}

@@ -14,7 +14,7 @@ import (
 
 type runParams struct {
 	root        string
-	appsDir     string
+	apps        []string
 	resolverFor func(app string) SecretResolver
 	command     []string
 }
@@ -32,17 +32,13 @@ type prepared struct {
 // (os environment plus app-namespaced secrets) and the compose file list with
 // COMPOSE_FILE already appended to env. A store-level failure is fatal; a missing
 // individual secret is not. No secret is written to disk.
-func prepare(ctx context.Context, root, appsDir string, resolverFor func(app string) SecretResolver) (*prepared, error) {
-	apps, err := discoverApps(root, appsDir)
-	if err != nil {
-		return nil, err
-	}
-
+func prepare(ctx context.Context, root string, apps []string, resolverFor func(app string) SecretResolver) (*prepared, error) {
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(root, "docker-compose.yml")}
 
-	for _, app := range apps {
-		names, err := secrets.SecretNames(configDir(root, appsDir, app))
+	for _, appPath := range apps {
+		app := appName(appPath)
+		names, err := secrets.SecretNames(appConfigDir(root, appPath))
 		if err != nil {
 			return nil, fmt.Errorf("reading %s config: %w", app, err)
 		}
@@ -78,7 +74,7 @@ func prepare(ctx context.Context, root, appsDir string, resolverFor func(app str
 // run resolves every app's secrets and execs command with them set in the
 // environment and COMPOSE_FILE pointed at the generated overrides.
 func run(ctx context.Context, p runParams) error {
-	prep, err := prepare(ctx, p.root, p.appsDir, p.resolverFor)
+	prep, err := prepare(ctx, p.root, p.apps, p.resolverFor)
 	if err != nil {
 		return err
 	}
@@ -95,26 +91,17 @@ func run(ctx context.Context, p runParams) error {
 	return c.Run()
 }
 
-// discoverApps returns the names of every directory under <root>/<appsDir> that
-// has a config package.
-func discoverApps(root, appsDir string) ([]string, error) {
-	dir := filepath.Join(root, appsDir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("listing apps in %s: %w", dir, err)
-	}
-	var apps []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if info, err := os.Stat(configDir(root, appsDir, e.Name())); err == nil && info.IsDir() {
-			apps = append(apps, e.Name())
-		}
-	}
-	return apps, nil
+// appName is the short name used to namespace an app's secrets, derived from the
+// last element of its path — apps/server becomes "server".
+func appName(appPath string) string {
+	return filepath.Base(appPath)
 }
 
-func configDir(root, appsDir, app string) string {
-	return filepath.Join(root, appsDir, app, "config")
+// appConfigDir is the app's config package directory, resolved under root unless
+// the given path is already absolute.
+func appConfigDir(root, appPath string) string {
+	if filepath.IsAbs(appPath) {
+		return filepath.Join(appPath, "config")
+	}
+	return filepath.Join(root, appPath, "config")
 }

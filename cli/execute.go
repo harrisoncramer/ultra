@@ -20,8 +20,7 @@ func Execute() error {
 }
 
 type sharedFlags struct {
-	root    string
-	appsDir string
+	root string
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -41,13 +40,15 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 	var secretResolver string
 
 	cmd := &cobra.Command{
-		Use:   "run --secret-resolver <name> [flags] -- <command>...",
-		Short: "Resolve every app's secrets with a secret resolver and exec the command",
+		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
+		Short: "Resolve the given apps' secrets with a secret resolver and exec the command",
 		Long: "run resolves each app's secrets via the secret resolver named by\n" +
 			"--secret-resolver (for example 1password), forwards them into that app's\n" +
 			"container through a generated compose override, and execs the given command.\n" +
-			"No secret is written to disk.",
-		Args: cobra.MinimumNArgs(1),
+			"Apps are the directories given before --, each holding a config package (name\n" +
+			"taken from the path's last element); if none are given the apps listed in\n" +
+			".ultra.toml are used. No secret is written to disk.",
+		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
@@ -62,11 +63,15 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		}
 		dash := cmd.ArgsLenAtDash()
 		if dash < 0 || dash >= len(args) {
-			return fmt.Errorf("usage: ultra run --secret-resolver <name> [flags] -- <command>")
+			return fmt.Errorf("usage: ultra run [app-path...] -- <command>")
+		}
+		apps := resolveApps(args[:dash], fc)
+		if len(apps) == 0 {
+			return fmt.Errorf("no apps given: pass app paths before -- or set apps in .ultra.toml")
 		}
 		return run(cmd.Context(), runParams{
 			root:        shared.root,
-			appsDir:     shared.appsDir,
+			apps:        apps,
 			resolverFor: resolverFor,
 			command:     args[dash:],
 		})
@@ -79,14 +84,15 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	var secretResolver, configResolver string
 
 	cmd := &cobra.Command{
-		Use:   "validate --secret-resolver <name> [flags]",
-		Short: "Resolve every app's secrets and config and validate each app's Load",
+		Use:   "validate [app-path...] --secret-resolver <name> [flags]",
+		Short: "Resolve the given apps' secrets and config and validate each app's Load",
 		Long: "validate resolves secrets the same way as run (--secret-resolver), but rather\n" +
 			"than starting containers it reconstructs the environment each app would boot\n" +
 			"with — its non-secret config from --config-resolver (docker-compose by default)\n" +
-			"plus its resolved secrets — and checks that the app's config.Load succeeds. It\n" +
-			"reports each app and exits non-zero if any fail: a pre-flight before up.",
-		Args: cobra.NoArgs,
+			"plus its resolved secrets — and checks that the app's config.Load succeeds.\n" +
+			"Apps are the directories given as arguments, or those listed in .ultra.toml\n" +
+			"when none are given. It reports each app and exits non-zero if any fail.",
+		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
@@ -100,13 +106,17 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		if resolverFor == nil {
 			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
 		}
+		apps := resolveApps(args, fc)
+		if len(apps) == 0 {
+			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
+		}
 		cr, err := newConfigResolver(configResolver, shared.root)
 		if err != nil {
 			return err
 		}
 		return validate(cmd.Context(), validateParams{
 			root:           shared.root,
-			appsDir:        shared.appsDir,
+			apps:           apps,
 			secretResolver: resolverFor,
 			configResolver: cr,
 		})
@@ -116,7 +126,24 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 
 func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
-	cmd.Flags().StringVar(&shared.appsDir, "apps-dir", "apps", "directory under --root holding each app's config package")
+}
+
+// resolveApps returns the app paths to operate on: the given positional args
+// (each also split on commas), or the apps listed in .ultra.toml when none are
+// passed on the command line.
+func resolveApps(args []string, fc fileConfig) []string {
+	if len(args) == 0 {
+		return fc.apps
+	}
+	var apps []string
+	for _, a := range args {
+		for _, p := range strings.Split(a, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				apps = append(apps, p)
+			}
+		}
+	}
+	return apps
 }
 
 // bindSelectedSecretResolver binds the flags of the resolver named by
