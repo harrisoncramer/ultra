@@ -185,7 +185,11 @@ ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker comp
 
 Ultra supports two kinds of resolvers. 
 
-Your **secret resolver** says where secrets come from (1Password, AWS Secrets Manager, etc). Your **config resolver** says where an app's non-secret configuration comes from. Locally, there's no need to provide a config resolver, since all configuration is typically set in a docker-compose file already. In production, you can provide a config resolver and point it an an external configuration source, like a Kubernetes configmap, to ensure that your container will have a valid environment prior to deploying it.
+Your **secret resolver** says where secrets come from (1Password, AWS Secrets Manager, etc). 
+
+Your **config resolver** says where an app's non-secret configuration comes from. 
+
+The config resolver is used only by `ultra validate` and `ultra run` never uses it. See the config resolver section below for what that means and why you rarely need to change it.
 
 ```go
 type SecretResolver interface {
@@ -212,6 +216,17 @@ Ultra supports validating a configuration prior to starting a container. This is
 ```bash
 ultra validate apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
 ```
+
+### Config resolvers
+
+The `--config-resolver` is only ever used by the `ultra validate` command. The resolver just tells `validate` where the non-secret values live, so it can rebuild the boot environment. Pick one with `--config-resolver` (default `docker-compose`):
+
+- `docker-compose` (default) — validating on your host, before `up`. Reads from `docker-compose.yml`
+- `env` — validate inside a running container or pod, where they're already in the environment.
+- custom — read them from somewhere else (e.g. a Kubernetes ConfigMap, to gate a deploy from CI).
+
+In short: only set `custom` if you need to validate the configuration for your app before a deploy, where the configuration lives elsewhere, such as in configuration manifests.
+
 
 ### Configuration file
 
