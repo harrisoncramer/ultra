@@ -9,14 +9,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/spf13/pflag"
 )
 
 // ConfigResolverCommand registers a config resolver under a name selectable via
-// --config-resolver. New builds the resolver given the repo root.
+// --config-resolver. Setup binds the resolver's own flags on fs and returns a
+// factory that builds the resolver from the repo root once those flags are
+// parsed, mirroring SecretResolverCommand.
 type ConfigResolverCommand struct {
 	Name  string
 	Short string
-	New   func(root string) (ConfigResolver, error)
+	Setup func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error)
 }
 
 var configResolvers []ConfigResolverCommand
@@ -31,27 +35,31 @@ func init() {
 	RegisterConfigResolver(ConfigResolverCommand{
 		Name:  "docker-compose",
 		Short: "Read non-secret config from docker-compose.yml",
-		New: func(root string) (ConfigResolver, error) {
-			return &dockerComposeConfig{composeFile: filepath.Join(root, "docker-compose.yml")}, nil
+		Setup: func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+			return func(root string) (ConfigResolver, error) {
+				return &dockerComposeConfig{composeFile: filepath.Join(root, "docker-compose.yml")}, nil
+			}
 		},
 	})
 	RegisterConfigResolver(ConfigResolverCommand{
 		Name:  "env",
 		Short: "Use the process environment (non-secrets already set, e.g. in a container or pod)",
-		New: func(root string) (ConfigResolver, error) {
-			return envConfig{}, nil
+		Setup: func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+			return func(root string) (ConfigResolver, error) {
+				return envConfig{}, nil
+			}
 		},
 	})
 }
 
-// newConfigResolver builds the config resolver named by kind.
-func newConfigResolver(kind, root string) (ConfigResolver, error) {
+// findConfigResolver returns the config resolver command registered under name.
+func findConfigResolver(name string) (ConfigResolverCommand, bool) {
 	for _, rc := range configResolvers {
-		if rc.Name == kind {
-			return rc.New(root)
+		if rc.Name == name {
+			return rc, true
 		}
 	}
-	return nil, fmt.Errorf("unknown config resolver %q (valid: %s)", kind, configResolverNames())
+	return ConfigResolverCommand{}, false
 }
 
 func configResolverNames() string {

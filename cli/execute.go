@@ -103,6 +103,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
+	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := applyConfigDefaults(cmd, fc); err != nil {
@@ -111,11 +112,14 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		if resolverFor == nil {
 			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
 		}
+		if configResolverFor == nil {
+			return fmt.Errorf("--config-resolver must be one of: %s", configResolverNames())
+		}
 		apps := resolveApps(args, fc)
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
 		}
-		cr, err := newConfigResolver(configResolver, shared.root)
+		cr, err := configResolverFor(shared.root)
 		if err != nil {
 			return err
 		}
@@ -165,6 +169,22 @@ func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app stri
 		if rc.Name == name {
 			return rc.Setup(cmd.Flags())
 		}
+	}
+	return nil
+}
+
+// bindSelectedConfigResolver binds the flags of the resolver named by
+// --config-resolver onto cmd and returns its factory, mirroring
+// bindSelectedSecretResolver. The name comes from the command line or
+// .ultra.toml, falling back to the default docker-compose resolver, since the
+// resolver's flags must be bound before cobra parses.
+func bindSelectedConfigResolver(cmd *cobra.Command, fc fileConfig) func(root string) (ConfigResolver, error) {
+	name := fc.effective("config-resolver")
+	if name == "" {
+		name = "docker-compose"
+	}
+	if rc, ok := findConfigResolver(name); ok {
+		return rc.Setup(cmd.Flags())
 	}
 	return nil
 }

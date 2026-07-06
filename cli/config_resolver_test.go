@@ -1,15 +1,24 @@
 package cli
 
-import "testing"
+import (
+	"testing"
 
-func TestNewConfigResolver(t *testing.T) {
+	"github.com/spf13/pflag"
+)
+
+func TestConfigResolverSetup(t *testing.T) {
 	for _, kind := range []string{"docker-compose", "env"} {
-		if _, err := newConfigResolver(kind, "/tmp"); err != nil {
-			t.Errorf("newConfigResolver(%q): %v", kind, err)
+		rc, ok := findConfigResolver(kind)
+		if !ok {
+			t.Fatalf("findConfigResolver(%q): not registered", kind)
+		}
+		build := rc.Setup(pflag.NewFlagSet(kind, pflag.ContinueOnError))
+		if _, err := build("/tmp"); err != nil {
+			t.Errorf("building %q: %v", kind, err)
 		}
 	}
-	if _, err := newConfigResolver("nope", "/tmp"); err == nil {
-		t.Error("expected error for unknown config resolver")
+	if _, ok := findConfigResolver("nope"); ok {
+		t.Error("expected findConfigResolver to miss for unknown config resolver")
 	}
 }
 

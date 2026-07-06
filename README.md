@@ -321,24 +321,58 @@ func (v vaultResolver) Resolve(ctx context.Context, names []string) (map[string]
 
 ### Writing a custom config resolver
 
-Config resolvers are pluggable the same way, for when `validate` needs to read non-secret config ship, like Kubernetes manifests, for instance. 
+Config resolvers are pluggable the same way, for when `validate` needs to read non-secret config from somewhere other than docker-compose, like Kubernetes manifests, for instance.
 
-Register one with `cli.RegisterConfigResolver` and select it with `--config-resolver`:
+Register one with `cli.RegisterConfigResolver` and select it with `--config-resolver`. Setup binds the resolver's own flags on the flag set and returns a factory that builds the resolver from the repo root once those flags are parsed, mirroring a secret resolver:
 
 ```go
 cli.RegisterConfigResolver(cli.ConfigResolverCommand{
 	Name:  "k8s",
 	Short: "Read non-secret config from Kubernetes manifests",
-	New: func(root string) (cli.ConfigResolver, error) {
-		return k8sConfig{root: root}, nil
+	Setup: func(fs *pflag.FlagSet) func(root string) (cli.ConfigResolver, error) {
+		var env string
+		fs.StringVar(&env, "env", "", "environment overlay to read")
+		return func(root string) (cli.ConfigResolver, error) {
+			return k8sConfig{root: root, env: env}, nil
+		}
 	},
 })
 
-type k8sConfig struct{ root string }
+type k8sConfig struct {
+	root string
+	env  string
+}
 
 func (k k8sConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
 	return nil, nil
 }
 ```
 
-Then `ultra validate --secret-resolver <name> --config-resolver k8s` validates against that source.
+The resolver's flags normally come from the config file rather than the command line, the same way a secret resolver's flags do — put them in the `[config.<name>]` sub-table and point a different file at each environment:
+
+```toml
+# .ultra.staging.toml
+[config]
+resolver = "k8s"
+
+[config.k8s]
+env = "staging"
+```
+
+```toml
+# .ultra.production.toml
+[config]
+resolver = "k8s"
+
+[config.k8s]
+env = "production"
+```
+
+Then each environment is a file, not a flag:
+
+```
+ultra validate --config-file .ultra.staging.toml
+ultra validate --config-file .ultra.production.toml
+```
+
+A resolver that needs no flags leaves the flag set untouched and just returns the factory.
