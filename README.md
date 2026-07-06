@@ -6,6 +6,64 @@ With ultra, you can inject, parse, and validate secrets and configuration for ea
 
 NOTE: This project is still under development. Expect breaking changes.
 
+## Why ultra
+
+A containerized Go app needs its configuration as environment variables. The usual way to get them there is a docker-compose service that enumerates every variable:
+
+```yaml
+# docker-compose.yml
+services:
+  worker:
+    build: .
+    environment:
+      LOG_LEVEL: info
+      DATABASE_URL: ${DATABASE_URL}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+```
+
+Then a secret file:
+
+```bash
+LOG_LEVEL=info
+DATABASE_URL=postgres://user:pass@db:5432/app
+STRIPE_SECRET_KEY=sk_live_...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+This works, but it has drawbacks.
+
+First, every variable is declared in three places: the struct your app parses (or `os.Getenv` calls), the Docker compose `environment:` block, and the `.env` file or environment system. Adding a secret means editing all three, and over time they drift out of sync.
+
+Second, the secrets often leak to disk. An `.env` file may hold plaintext credentials, which leak through backups, accidental commits, or shell history.
+
+Lastly, nothing is validated until the container boots. Missing or malformed values can slip through development processes, and surface as runtime crash rather than an error at boot.
+
+Ultra removes the duplication and the disk. Your typed config is the single source of truth, and fields tagged `secret:"true"` are the secrets:
+
+```go
+type Config struct {
+	LogLevel     string `env:"LOG_LEVEL" envDefault:"info"`
+	DatabaseURL  string `env:"DATABASE_URL,required,notEmpty" secret:"true"`
+	StripeKey    string `env:"STRIPE_SECRET_KEY,required,notEmpty" secret:"true"`
+}
+```
+
+Ultra reads that struct, resolves the secret-tagged values from your store (1Password, AWS Secrets Manager, Vault) entirely in memory, and injects them into the container at run time. Nothing is written to disk. The compose file keeps only the non-secret config, stated explicitly:
+
+```yaml
+# docker-compose.yml
+services:
+  worker:
+    build: .
+    environment:
+      LOG_LEVEL: info
+```
+
+And `ultra validate` checks every app's config against the full environment it would boot with, so a missing secret or an unparseable value fails fast instead of at container start.
+
 ## Quickstart
 
 1. Install the CLI:
