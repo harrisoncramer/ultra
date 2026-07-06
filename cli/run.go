@@ -15,6 +15,7 @@ import (
 type runParams struct {
 	root        string
 	apps        []string
+	configDir   string
 	resolverFor func(app string) SecretResolver
 	command     []string
 }
@@ -32,13 +33,14 @@ type prepared struct {
 // (os environment plus app-namespaced secrets) and the compose file list with
 // COMPOSE_FILE already appended to env. A store-level failure is fatal; a missing
 // individual secret is not. No secret is written to disk.
-func prepare(ctx context.Context, root string, apps []string, resolverFor func(app string) SecretResolver) (*prepared, error) {
+func prepare(ctx context.Context, p runParams) (*prepared, error) {
+	root := p.root
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(root, "docker-compose.yml")}
 
-	for _, appPath := range apps {
+	for _, appPath := range p.apps {
 		app := appName(appPath)
-		names, err := secrets.SecretNames(appConfigDir(root, appPath))
+		names, err := secrets.SecretNames(appConfigDir(root, appPath, p.configDir))
 		if err != nil {
 			return nil, fmt.Errorf("reading %s config: %w", app, err)
 		}
@@ -55,7 +57,7 @@ func prepare(ctx context.Context, root string, apps []string, resolverFor func(a
 		}
 		composeFiles = append(composeFiles, override)
 
-		values, err := resolverFor(app).Resolve(ctx, names)
+		values, err := p.resolverFor(app).Resolve(ctx, names)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +76,7 @@ func prepare(ctx context.Context, root string, apps []string, resolverFor func(a
 // run resolves every app's secrets and execs command with them set in the
 // environment and COMPOSE_FILE pointed at the generated overrides.
 func run(ctx context.Context, p runParams) error {
-	prep, err := prepare(ctx, p.root, p.apps, p.resolverFor)
+	prep, err := prepare(ctx, p)
 	if err != nil {
 		return err
 	}
@@ -97,11 +99,15 @@ func appName(appPath string) string {
 	return filepath.Base(appPath)
 }
 
-// appConfigDir is the app's config package directory, resolved under root unless
-// the given path is already absolute.
-func appConfigDir(root, appPath string) string {
-	if filepath.IsAbs(appPath) {
-		return filepath.Join(appPath, "config")
+// appConfigDir is the app's config package directory: <appPath>/<configDir>,
+// resolved under root unless appPath is already absolute. configDir defaults to
+// "config" but can be a nested path like "pkg/config".
+func appConfigDir(root, appPath, configDir string) string {
+	if configDir == "" {
+		configDir = "config"
 	}
-	return filepath.Join(root, appPath, "config")
+	if filepath.IsAbs(appPath) {
+		return filepath.Join(appPath, configDir)
+	}
+	return filepath.Join(root, appPath, configDir)
 }

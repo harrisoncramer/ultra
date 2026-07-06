@@ -20,7 +20,8 @@ func Execute() error {
 }
 
 type sharedFlags struct {
-	root string
+	root      string
+	configDir string
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -72,6 +73,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		return run(cmd.Context(), runParams{
 			root:        shared.root,
 			apps:        apps,
+			configDir:   shared.configDir,
 			resolverFor: resolverFor,
 			command:     args[dash:],
 		})
@@ -117,6 +119,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		return validate(cmd.Context(), validateParams{
 			root:           shared.root,
 			apps:           apps,
+			configDir:      shared.configDir,
 			secretResolver: resolverFor,
 			configResolver: cr,
 		})
@@ -126,6 +129,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 
 func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
+	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args

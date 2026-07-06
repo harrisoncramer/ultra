@@ -16,6 +16,7 @@ import (
 type validateParams struct {
 	root           string
 	apps           []string
+	configDir      string
 	secretResolver func(app string) SecretResolver
 	configResolver ConfigResolver
 }
@@ -43,7 +44,7 @@ func validate(ctx context.Context, p validateParams) error {
 
 func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	app := appName(appPath)
-	dir := appConfigDir(p.root, appPath)
+	dir := appConfigDir(p.root, appPath, p.configDir)
 	importPath, err := secrets.ConfigImportPath(dir)
 	if err != nil {
 		return err
