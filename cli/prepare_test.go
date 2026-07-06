@@ -105,6 +105,27 @@ func TestPrepareWritesNoOverrideWhenNothingResolves(t *testing.T) {
 	}
 }
 
+func TestRunRemovesOverridesOnExit(t *testing.T) {
+	root := writeTestApp(t, "RESOLVED")
+	p := runParams{
+		root:      root,
+		apps:      []string{"app"},
+		configDir: "config",
+		resolverFor: func(app string) SecretResolver {
+			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
+		},
+		command: []string{"true"},
+	}
+
+	if err := run(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "tmp", "app.compose.yml")); !os.IsNotExist(err) {
+		t.Errorf("override not cleaned up after run, stat err = %v", err)
+	}
+}
+
 func hasEnv(env []string, key, val string) bool {
 	want := key + "=" + val
 	for _, e := range env {

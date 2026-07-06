@@ -1,0 +1,49 @@
+version: "2"
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+linters:
+  enable:
+    - bodyclose
+    - unparam
+    - exhaustive
+  settings:
+    depguard:
+      rules:
+        all:
+          files:
+            - $all
+          deny:
+            - pkg: github.com/xtgo/uuid
+              desc: Use `github.com/google/uuid` package for UUIDs instead.
+        not-test:
+          files:
+            - "!$test"
+    staticcheck:
+      checks: [
+          "all",
+          "-ST1003", # variable naming requirements
+          "-ST1000", # packages require comments
+        ]
+    exhaustive:
+      check:
+        - switch
+      ignore-enum-members: "_UNSPECIFIED$"
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -27,6 +27,7 @@ type runParams struct {
 type prepared struct {
 	env          []string
 	composeFiles []string
+	overrides    []string
 }
 
 // prepare discovers every app, resolves its secrets via resolverFor, writes the
@@ -38,6 +39,7 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 	root := p.root
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(root, "docker-compose.yml")}
+	var overrides []string
 
 	for _, appPath := range p.apps {
 		app := appName(appPath)
@@ -75,12 +77,13 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 				return nil, err
 			}
 			composeFiles = append(composeFiles, override)
+			overrides = append(overrides, override)
 		}
 		fmt.Fprintf(os.Stderr, "ultra: resolved %d/%d secrets for %s\n", len(values), len(names), app)
 	}
 
 	env = append(env, "COMPOSE_FILE="+strings.Join(composeFiles, string(os.PathListSeparator)))
-	return &prepared{env: env, composeFiles: composeFiles}, nil
+	return &prepared{env: env, composeFiles: composeFiles, overrides: overrides}, nil
 }
 
 // run resolves every app's secrets and execs command with them set in the
@@ -90,6 +93,15 @@ func run(ctx context.Context, p runParams) error {
 	if err != nil {
 		return err
 	}
+	// The generated overrides carry only references, no secrets, but a stale one
+	// left in tmp/ could be picked up by a later launch and map a real name onto an
+	// unset variable. Remove them once the command returns; a detached `up -d` has
+	// already read them by then, and a foreground command holds until exit.
+	defer func() {
+		for _, f := range prep.overrides {
+			os.Remove(f)
+		}
+	}()
 
 	bin, err := exec.LookPath(p.command[0])
 	if err != nil {
