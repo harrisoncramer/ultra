@@ -1,0 +1,228 @@
+package cli
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/spf13/pflag"
+)
+
+// vaultTimeout bounds a single Vault HTTP read so an unreachable or hung server
+// fails the call instead of blocking indefinitely.
+const vaultTimeout = 15 * time.Second
+
+func init() {
+	RegisterSecretResolver(SecretResolverCommand{
+		Name:  "vault",
+		Short: "Resolve secrets from HashiCorp Vault (KV v2) over its HTTP API",
+		Long: "vault reads each app's secrets from a single HashiCorp Vault KV v2 secret,\n" +
+			"one secret per app whose data keys are the env-var names — for the app\n" +
+			"'worker' that is <mount>/worker with keys like GOOGLE_CLIENT_ID. --mount\n" +
+			"selects the KV v2 mount (default 'secret'). It talks to Vault's HTTP API\n" +
+			"directly (no vault binary required): the address comes from --address or\n" +
+			"VAULT_ADDR, and the token from VAULT_TOKEN or ~/.vault-token. The standard\n" +
+			"VAULT_CACERT, VAULT_CAPATH, VAULT_CLIENT_CERT/KEY, VAULT_TLS_SERVER_NAME, and\n" +
+			"VAULT_SKIP_VERIFY TLS settings are honored.",
+		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
+			var mount, address, namespace string
+			fs.StringVar(&mount, "mount", "secret", "KV v2 mount path the app's secret lives under")
+			fs.StringVar(&address, "address", "", "Vault address (defaults to VAULT_ADDR)")
+			fs.StringVar(&namespace, "namespace", "", "Vault namespace (Enterprise; defaults to VAULT_NAMESPACE)")
+			return func(app string) SecretResolver {
+				return vaultKV{app: app, mount: mount, address: address, namespace: namespace}
+			}
+		},
+	})
+}
+
+// vaultKV resolves secrets from HashiCorp Vault's KV v2 engine over the HTTP API,
+// reading one secret per app at <mount>/<app> whose data map is the name -> value
+// pairs. It uses the same VAULT_ADDR/VAULT_TOKEN environment the vault CLI would,
+// so no vault binary is needed and no token is passed on the command line.
+type vaultKV struct {
+	app       string
+	mount     string
+	address   string
+	namespace string
+}
+
+// vaultResponse mirrors the KV v2 read endpoint: the actual key/value pairs are
+// nested under data.data. Each value is left raw because KV v2 stores arbitrary
+// JSON per key, not just strings.
+type vaultResponse struct {
+	Data struct {
+		Data map[string]json.RawMessage `json:"data"`
+	} `json:"data"`
+}
+
+// Resolve fetches the app's secret once over the KV v2 read API and picks out the
+// requested keys. A missing address/token, or an unreachable/permission-denied
+// Vault, is fatal; a missing individual key is simply omitted from the result.
+func (v vaultKV) Resolve(ctx context.Context, names []string) (map[string]string, error) {
+	addr := v.address
+	if addr == "" {
+		addr = os.Getenv("VAULT_ADDR")
+	}
+	if addr == "" {
+		return nil, fmt.Errorf("vault requires --address or VAULT_ADDR")
+	}
+	token, err := vaultToken()
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/v1/%s/data/%s", strings.TrimRight(addr, "/"), v.mount, v.app)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building vault request: %w", err)
+	}
+	req.Header.Set("X-Vault-Token", token)
+	if ns := v.vaultNamespace(); ns != "" {
+		req.Header.Set("X-Vault-Namespace", ns)
+	}
+
+	client, err := vaultHTTPClient()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s/%s from vault: %w", v.mount, v.app, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("vault read %s/%s: %s: %s", v.mount, v.app, resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var parsed vaultResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("parsing vault secret %s/%s: %w", v.mount, v.app, err)
+	}
+
+	out := make(map[string]string, len(names))
+	for _, name := range names {
+		raw, ok := parsed.Data.Data[name]
+		if !ok {
+			continue
+		}
+		out[name] = vaultValueString(raw)
+	}
+	return out, nil
+}
+
+// vaultValueString renders a KV v2 value as a string: a JSON string is unquoted,
+// and any other JSON scalar or structure (number, bool, object) is kept as its
+// raw JSON text so non-string secrets survive intact.
+func vaultValueString(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
+}
+
+// vaultHTTPClient builds the HTTP client used for a read: a bounded timeout so a
+// hung server can't block forever, and a TLS config assembled from Vault's
+// standard environment so an internal CA or client certificate is honored.
+func vaultHTTPClient() (*http.Client, error) {
+	tlsCfg, err := vaultTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: vaultTimeout, Transport: tr}, nil
+}
+
+// vaultTLSConfig honors the same TLS environment the vault CLI reads:
+// VAULT_CACERT / VAULT_CAPATH for a private CA, VAULT_CLIENT_CERT / VAULT_CLIENT_KEY
+// for mutual TLS, VAULT_TLS_SERVER_NAME for SNI, and VAULT_SKIP_VERIFY to disable
+// verification. With none set it falls back to the system roots.
+func vaultTLSConfig() (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+
+	if sn := os.Getenv("VAULT_TLS_SERVER_NAME"); sn != "" {
+		cfg.ServerName = sn
+	}
+	if skip, _ := strconv.ParseBool(os.Getenv("VAULT_SKIP_VERIFY")); skip {
+		cfg.InsecureSkipVerify = true
+	}
+
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	added := false
+	if f := os.Getenv("VAULT_CACERT"); f != "" {
+		pem, err := os.ReadFile(f)
+		if err != nil {
+			return nil, fmt.Errorf("reading VAULT_CACERT: %w", err)
+		}
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("VAULT_CACERT %s: no valid certificates", f)
+		}
+		added = true
+	}
+	if dir := os.Getenv("VAULT_CAPATH"); dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil, fmt.Errorf("reading VAULT_CAPATH: %w", err)
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if pem, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil && pool.AppendCertsFromPEM(pem) {
+				added = true
+			}
+		}
+	}
+	if added {
+		cfg.RootCAs = pool
+	}
+
+	cert, key := os.Getenv("VAULT_CLIENT_CERT"), os.Getenv("VAULT_CLIENT_KEY")
+	if cert != "" && key != "" {
+		pair, err := tls.LoadX509KeyPair(cert, key)
+		if err != nil {
+			return nil, fmt.Errorf("loading VAULT_CLIENT_CERT/VAULT_CLIENT_KEY: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{pair}
+	}
+	return cfg, nil
+}
+
+func (v vaultKV) vaultNamespace() string {
+	if v.namespace != "" {
+		return v.namespace
+	}
+	return os.Getenv("VAULT_NAMESPACE")
+}
+
+// vaultToken reads the token from VAULT_TOKEN, falling back to the ~/.vault-token
+// file the vault CLI writes on login.
+func vaultToken() (string, error) {
+	if t := os.Getenv("VAULT_TOKEN"); t != "" {
+		return t, nil
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if b, err := os.ReadFile(filepath.Join(home, ".vault-token")); err == nil {
+			if t := strings.TrimSpace(string(b)); t != "" {
+				return t, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("vault requires VAULT_TOKEN or a ~/.vault-token file")
+}

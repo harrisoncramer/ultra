@@ -139,11 +139,12 @@ type ConfigResolver interface {
 }
 ```
 
-Choose your secret resolver with the `--secret-resolver` flag. Secret resolvers take different arguments. Currently, ultra ships with support for AWS and 1Password:
+Choose your secret resolver with the `--secret-resolver` flag. Secret resolvers take different arguments. Currently, ultra ships with support for AWS Secrets Manager, 1Password, and HashiCorp Vault:
 
 ```bash
 ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker compose up
 ultra run apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1 -- docker compose up
+ultra run apps/worker --secret-resolver vault --mount secret -- docker compose up
 ```
 
 ### Validating configuration

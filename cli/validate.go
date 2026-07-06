@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/harrisoncramer/ultra/pkg/secrets"
@@ -66,8 +67,9 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 
 	// Only hit the secret store if the app actually declares secrets; an app with
 	// none (e.g. no secret-tagged fields) has no vault item to fetch.
+	var secretVals map[string]string
 	if len(names) > 0 {
-		secretVals, err := p.secretResolver(app).Resolve(ctx, names)
+		secretVals, err = p.secretResolver(app).Resolve(ctx, names)
 		if err != nil {
 			return err
 		}
@@ -91,11 +93,29 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("%s", msg)
+			return fmt.Errorf("%s", redactSecrets(msg, secretVals))
 		}
 		return err
 	}
 	return nil
+}
+
+// redactSecrets replaces any secret value appearing in s with [redacted], so a
+// config.Load error that echoes a malformed value (e.g. a non-numeric int) can't
+// leak it to the console. Values are masked longest-first so one value contained
+// in another is still fully replaced.
+func redactSecrets(s string, secretVals map[string]string) string {
+	vals := make([]string, 0, len(secretVals))
+	for _, v := range secretVals {
+		if v != "" {
+			vals = append(vals, v)
+		}
+	}
+	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
+	for _, v := range vals {
+		s = strings.ReplaceAll(s, v, "[redacted]")
+	}
+	return s
 }
 
 func writeValidateMain(dir, importPath string) error {
