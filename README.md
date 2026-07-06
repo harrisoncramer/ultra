@@ -230,7 +230,7 @@ In short: only set `custom` if you need to validate the configuration for your a
 
 ### Configuration file
 
-To reduce arguments and flags, ultra supports an optional `.ultra.toml` at the repo root. Anything passed on the command line overrides the file.
+To reduce arguments and flags, ultra supports an optional `.ultra.toml` at the repo root. Anything passed on the command line overrides the file. Point ultra at a file elsewhere with `--config-file <path>`; when given, the file must exist.
 
 ```toml
 apps = ["apps/server", "apps/worker"] # The apps to manage when none are named on the command line, plus shared flags.

@@ -41,24 +41,32 @@ type fileConfig struct {
 	apps  []string
 }
 
-// loadConfig reads .ultra.toml from the repo root and flattens its sections into
-// flag defaults. The root is located via a raw scan for --root, defaulting to the
-// current directory since the file itself can set root. A missing file yields an
-// empty config; a malformed file is an error.
+// loadConfig reads the ultra config file and flattens its sections into flag
+// defaults. The path is taken from --config-file when given, otherwise it defaults
+// to configFileName under the repo root, which is located via a raw scan for
+// --root (defaulting to the current directory since the file itself can set root).
+// Both flags are read raw from os.Args because the file is loaded before cobra
+// parses. A missing file yields an empty config; a malformed file is an error.
 func loadConfig() (fileConfig, error) {
-	root := rawFlagValue(os.Args, "root")
-	if root == "" {
-		root = "."
+	path := rawFlagValue(os.Args, "config-file")
+	explicit := path != ""
+	if !explicit {
+		root := rawFlagValue(os.Args, "root")
+		if root == "" {
+			root = "."
+		}
+		path = filepath.Join(root, configFileName)
 	}
 	v := viper.New()
-	v.SetConfigFile(filepath.Join(root, configFileName))
+	v.SetConfigFile(path)
 	v.SetConfigType("toml")
 	if err := v.ReadInConfig(); err != nil {
 		var notFound viper.ConfigFileNotFoundError
-		if errors.As(err, &notFound) || errors.Is(err, os.ErrNotExist) {
+		missing := errors.As(err, &notFound) || errors.Is(err, os.ErrNotExist)
+		if missing && !explicit {
 			return fileConfig{}, nil
 		}
-		return fileConfig{}, fmt.Errorf("reading %s: %w", configFileName, err)
+		return fileConfig{}, fmt.Errorf("reading %s: %w", path, err)
 	}
 	return flatten(v), nil
 }

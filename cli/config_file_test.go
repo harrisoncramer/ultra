@@ -145,3 +145,45 @@ func TestLoadConfigMissingFileIsEmpty(t *testing.T) {
 		t.Errorf("expected empty config for a missing file, got %+v", fc)
 	}
 }
+
+func withArgs(t *testing.T, args []string) {
+	t.Helper()
+	orig := os.Args
+	os.Args = args
+	t.Cleanup(func() { os.Args = orig })
+}
+
+func TestLoadConfigFromConfigFileFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.toml")
+	body := "apps = [\"apps/server\"]\n\n[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Chdir elsewhere so the default .ultra.toml location holds nothing.
+	t.Chdir(t.TempDir())
+	withArgs(t, []string{"ultra", "run", "--config-file", path})
+
+	fc, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if fc.flags["secret-resolver"] != "1password" {
+		t.Errorf("secret-resolver = %q, want 1password", fc.flags["secret-resolver"])
+	}
+	if fc.flags["vault"] != "Engineering" {
+		t.Errorf("vault = %q, want Engineering", fc.flags["vault"])
+	}
+	if len(fc.apps) != 1 || fc.apps[0] != "apps/server" {
+		t.Errorf("apps = %v, want [apps/server]", fc.apps)
+	}
+}
+
+func TestLoadConfigExplicitMissingFileErrors(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.toml")
+	withArgs(t, []string{"ultra", "run", "--config-file", missing})
+
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("expected an error for an explicit missing --config-file, got nil")
+	}
+}

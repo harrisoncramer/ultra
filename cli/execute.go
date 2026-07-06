@@ -3,25 +3,28 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
 
 // Execute builds the ultra command tree — root, run, validate — and runs it.
-// Flags default to any values set in .ultra.toml at the repo root; the command
-// line overrides them.
+// Flags default to any values set in the ultra config file (.ultra.toml under
+// --root, or the path given by --config-file); the command line overrides them.
 func Execute() error {
 	fc, err := loadConfig()
 	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		return err
 	}
 	return newRootCmd(fc).ExecuteContext(context.Background())
 }
 
 type sharedFlags struct {
-	root      string
-	configDir string
+	root       string
+	configDir  string
+	configFile string
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -130,6 +133,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
 	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
+	cmd.Flags().StringVar(&shared.configFile, "config-file", "", "path to the ultra config file (default "+configFileName+" under --root)")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args
