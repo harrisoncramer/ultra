@@ -1,11 +1,8 @@
 package ultra
 
 import (
-	"bytes"
-	"log/slog"
 	"reflect"
 	"sort"
-	"strings"
 	"testing"
 
 	secrets "github.com/harrisoncramer/ultra/pkg/secrets"
@@ -41,20 +38,20 @@ func TestSecretEnvNamesRecurses(t *testing.T) {
 	}
 }
 
-func TestLoadWarnsOnMissingSecret(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	defer slog.SetDefault(prev)
-
+func TestLoadFailsOnMissingRequiredSecret(t *testing.T) {
 	type cfg struct {
-		Token string `env:"MISSING_SECRET_TOKEN" secret:"true"`
+		Token string `env:"REQUIRED_SECRET_TOKEN,required,notEmpty" secret:"true"`
 	}
-	// Not required, so parse succeeds; the point is the warning.
+	if _, err := Load[cfg](); err == nil {
+		t.Fatal("expected an error when a required secret is unset")
+	}
+}
+
+func TestLoadAllowsMissingOptionalSecret(t *testing.T) {
+	type cfg struct {
+		Token string `env:"OPTIONAL_SECRET_TOKEN" secret:"true"`
+	}
 	if _, err := Load[cfg](); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !strings.Contains(buf.String(), "MISSING_SECRET_TOKEN") {
-		t.Fatalf("expected a warning naming MISSING_SECRET_TOKEN, got: %q", buf.String())
+		t.Fatalf("optional secret unset should not fail: %v", err)
 	}
 }
