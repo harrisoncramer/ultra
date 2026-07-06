@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	compose "github.com/harrisoncramer/ultra/pkg/compose"
@@ -48,23 +49,32 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 			continue
 		}
 
-		override := filepath.Join(root, "tmp", app+".compose.yml")
-		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(override, []byte(compose.ComposeOverride(app, names)), 0o644); err != nil {
-			return nil, err
-		}
-		composeFiles = append(composeFiles, override)
-
 		values, err := p.resolverFor(app).Resolve(ctx, names)
 		if err != nil {
 			return nil, err
 		}
-		// Namespace each secret so two apps sharing a name (e.g. DATABASE_URL)
-		// don't collide in this shared env; the override maps it back per service.
+		// Forward only the secrets the resolver actually returned, and namespace
+		// each so two apps sharing a name (e.g. DATABASE_URL) don't collide in this
+		// shared env; the override maps it back per service. A name the store lacks
+		// is left out of the override entirely, so the value the platform already
+		// provides (e.g. the compose environment) survives instead of being
+		// overridden with an empty one.
+		resolved := make([]string, 0, len(values))
 		for name, val := range values {
+			resolved = append(resolved, name)
 			env = append(env, compose.ComposeVar(app, name)+"="+val)
+		}
+		sort.Strings(resolved)
+
+		if len(resolved) > 0 {
+			override := filepath.Join(root, "tmp", app+".compose.yml")
+			if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(override, []byte(compose.ComposeOverride(app, resolved)), 0o644); err != nil {
+				return nil, err
+			}
+			composeFiles = append(composeFiles, override)
 		}
 		fmt.Fprintf(os.Stderr, "ultra: resolved %d/%d secrets for %s\n", len(values), len(names), app)
 	}

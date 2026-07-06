@@ -163,7 +163,7 @@ if err != nil {
 fmt.Println("The Google Client ID is: %s", cfg.Google.ClientID)
 ```
 
-With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container automatically by building a dynamic set of key/value pairs for each Docker container. 
+With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container automatically by building a dynamic set of key/value pairs for each Docker container. Only the secrets the store actually returns are forwarded; a secret the store doesn't hold is left untouched, so a value the platform already provides — the compose `environment:` block, for instance — is used as-is rather than overridden with an empty one. 
 
 The docker compose for the above configuration does not need to re-enumerate the secrets stored in the existing `Config` value. This is sufficient: 
 
