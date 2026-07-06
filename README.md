@@ -119,7 +119,7 @@ ultra run -- docker compose up
 
 Applications need environment variables. Those values come from two places: _secrets_ live in a secret store (1Password, AWS Secrets Manager) and must be resolved and injected without ever touching disk, while _non-secret config_ comes from a platform, like docker compose, or application manifests in production. 
 
-The `ultra` tool models both though a `Config` value, which the Ultra CLI validates. 
+The `ultra` tool models both though a `Config` value, which the Ultra CLI validates using the excellent [caarlos0/env](https://github.com/caarlos0/env) library.
 
 Prior to application startup, call `ultra validate` to verify that your `Config` is valid with all secrets and environment configuration. Call `ultra run` to inject the variables and expose them to your application during runtime. 
 
