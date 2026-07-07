@@ -45,9 +45,9 @@ Ultra removes the duplication and the disk. Your typed config is the single sour
 
 ```go
 type Config struct {
-	LogLevel     string `env:"LOG_LEVEL" envDefault:"info"`
-	DatabaseURL  string `env:"DATABASE_URL,required,notEmpty" secret:"true"`
-	StripeKey    string `env:"STRIPE_SECRET_KEY,required,notEmpty" secret:"true"`
+	LogLevel    string `env:"LOG_LEVEL" envDefault:"info"`
+	DatabaseURL string `env:"DATABASE_URL" secret:"true" required:"*"`
+	StripeKey   string `env:"STRIPE_SECRET_KEY" secret:"true" required:"*"`
 }
 ```
 
@@ -78,7 +78,7 @@ go install github.com/harrisoncramer/ultra/cmd/ultra@latest
 package config
 
 type Config struct {
-	DatabaseURL string `env:"DATABASE_URL,required,notEmpty" secret:"true"`
+	DatabaseURL string `env:"DATABASE_URL" secret:"true" required:"*"`
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info"`
 }
 ```
@@ -132,13 +132,13 @@ Here's what a more complex configuration with Ultra might look like:
 package config
 
 type GoogleConfig struct {
-	ClientID     string `env:"GOOGLE_CLIENT_ID,required,notEmpty" secret:"true"`
-	ClientSecret string `env:"GOOGLE_CLIENT_SECRET,required,notEmpty" secret:"true"`
-	RefreshToken string `env:"GOOGLE_REFRESH_TOKEN,required,notEmpty" secret:"true"`
+	ClientID     string `env:"GOOGLE_CLIENT_ID" secret:"true" required:"*"`
+	ClientSecret string `env:"GOOGLE_CLIENT_SECRET" secret:"true" required:"*"`
+	RefreshToken string `env:"GOOGLE_REFRESH_TOKEN" secret:"true" required:"*"`
 }
 
 type DatabaseConfig struct {
-	URL string `env:"DATABASE_URL,required,notEmpty" secret:"true"`
+	URL string `env:"DATABASE_URL" secret:"true" required:"*"`
 }
 
 type Config struct {
