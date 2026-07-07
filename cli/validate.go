@@ -17,6 +17,7 @@ type validateParams struct {
 	root           string
 	apps           []string
 	configDir      string
+	environment    string
 	secretResolver func(app string) SecretResolver
 	configResolver ConfigResolver
 }
@@ -83,7 +84,7 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	// The generated program lives inside the app's module so it can import the
 	// config package; it is removed once validation finishes.
 	genDir := filepath.Join(filepath.Dir(dir), "ultravalidate")
-	if err := writeValidateMain(genDir, importPath); err != nil {
+	if err := writeValidateMain(genDir, importPath, p.environment); err != nil {
 		return err
 	}
 	defer os.RemoveAll(genDir)
@@ -120,9 +121,15 @@ func redactSecrets(s string, secretVals map[string]string) string {
 	return s
 }
 
-func writeValidateMain(dir, importPath string) error {
+func writeValidateMain(dir, importPath, environment string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	// With an environment, load for it so a field's required tag is enforced only
+	// where it applies; without one, load plainly.
+	loadCall := "ultra.Load(&config.Config{})"
+	if environment != "" {
+		loadCall = fmt.Sprintf("ultra.Load(&config.Config{}, ultra.WithEnvironment(%q))", environment)
 	}
 	src := fmt.Sprintf(`package main
 
@@ -135,11 +142,11 @@ import (
 )
 
 func main() {
-	if _, err := ultra.Load(&config.Config{}); err != nil {
+	if _, err := %s; err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
-`, importPath)
+`, importPath, loadCall)
 	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644)
 }

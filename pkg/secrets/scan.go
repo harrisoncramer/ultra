@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/types"
 	"reflect"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -11,16 +12,30 @@ import (
 
 // Field is one env-var field reachable from a Config struct.
 type Field struct {
-	Name     string // env-var name (the part before the first comma of the env tag)
-	Required bool   // the env tag carries `required` or `notEmpty` — the value must be set
-	Secret   bool   // the field is tagged secret:"true"
+	Name         string   // env-var name (the part before the first comma of the env tag)
+	Secret       bool     // the field is tagged secret:"true"
+	RequiredEnvs []string // environments the field is required in (from the required tag, own or inherited); "*" means all, nil means never
+}
+
+// RequiredIn reports whether the field must be provided in environment: true when
+// it is required everywhere ("*") or names this environment.
+func (f Field) RequiredIn(environment string) bool {
+	for _, e := range f.RequiredEnvs {
+		if e == "*" || e == environment {
+			return true
+		}
+	}
+	return false
 }
 
 // Fields type-checks the Go package at dir and returns every env-var field
-// reachable from its exported Config struct, recording whether each is required
-// and secret-tagged. It follows embedded and nested struct fields wherever
-// they're defined, including sub-structs in other packages, and deduplicates by
-// env-var name. It fails if the package has no exported Config struct.
+// reachable from its exported Config struct, recording whether each is
+// secret-tagged and the environments it is required in. It follows embedded and
+// nested struct fields wherever they're defined, including sub-structs in other
+// packages, propagating a struct's required tag to its fields, and deduplicates
+// by env-var name. It fails if the package has no exported Config struct, or if
+// a field declares required/notEmpty in its env tag — required-ness must use the
+// required tag instead.
 func Fields(dir string) ([]Field, error) {
 	st, err := configStruct(dir)
 	if err != nil {
@@ -28,25 +43,37 @@ func Fields(dir string) ([]Field, error) {
 	}
 
 	var fields []Field
+	var badEnvTag []string
 	seen := map[string]struct{}{}
 	visited := map[*types.Struct]bool{}
 
-	var visit func(s *types.Struct)
-	visit = func(s *types.Struct) {
+	var visit func(s *types.Struct, inherited []string)
+	visit = func(s *types.Struct, inherited []string) {
 		if visited[s] {
 			return
 		}
 		visited[s] = true
 		for i := 0; i < s.NumFields(); i++ {
+			tag := reflect.StructTag(s.Tag(i))
+			// A field's required environments are its own required tag, or those
+			// inherited from the struct it lives in. An embedded or nested struct
+			// passes its required tag down to its fields.
+			requiredEnvs := inherited
+			if r, ok := tag.Lookup("required"); ok {
+				requiredEnvs = splitEnvs(r)
+			}
 			// Recurse into struct-typed fields (embedded or named), mirroring how
 			// env.Parse descends into them. Type info resolves them uniformly, so
 			// a sub-struct from another package is followed just like a local one.
 			if child := structUnder(s.Field(i).Type()); child != nil {
-				visit(child)
+				visit(child, requiredEnvs)
 			}
-			tag := reflect.StructTag(s.Tag(i))
-			name, opts, _ := strings.Cut(tag.Get("env"), ",") // "NAME,required" -> "NAME", "required"
+			name, opts, _ := strings.Cut(tag.Get("env"), ",")
 			if name == "" {
+				continue
+			}
+			if hasOption(opts, "required") || hasOption(opts, "notEmpty") {
+				badEnvTag = append(badEnvTag, name)
 				continue
 			}
 			if _, dup := seen[name]; dup {
@@ -54,15 +81,34 @@ func Fields(dir string) ([]Field, error) {
 			}
 			seen[name] = struct{}{}
 			fields = append(fields, Field{
-				Name:     name,
-				Required: hasOption(opts, "required") || hasOption(opts, "notEmpty"),
-				Secret:   tag.Get("secret") == "true",
+				Name:         name,
+				Secret:       tag.Get("secret") == "true",
+				RequiredEnvs: requiredEnvs,
 			})
 		}
 	}
-	visit(st)
+	visit(st, nil)
 
+	if len(badEnvTag) > 0 {
+		sort.Strings(badEnvTag)
+		return nil, fmt.Errorf("config at %s: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead", dir, strings.Join(badEnvTag, ", "))
+	}
 	return fields, nil
+}
+
+// splitEnvs parses a comma-separated required tag into its environment names.
+func splitEnvs(s string) []string {
+	raw := strings.Split(s, ",")
+	envs := make([]string, 0, len(raw))
+	for _, p := range raw {
+		if p = strings.TrimSpace(p); p != "" {
+			envs = append(envs, p)
+		}
+	}
+	if len(envs) == 0 {
+		return nil
+	}
+	return envs
 }
 
 // SecretNames returns the env-var names of every field tagged `secret:"true"`

@@ -14,6 +14,7 @@ type lintParams struct {
 	root           string
 	apps           []string
 	configDir      string
+	environment    string
 	secretResolver func(app string) SecretResolver
 	configResolver ConfigResolver
 }
@@ -87,7 +88,7 @@ func lintApp(ctx context.Context, p lintParams, appPath string) ([]string, error
 
 	var missing []string
 	for _, f := range fields {
-		if !f.Required {
+		if !f.RequiredIn(p.environment) {
 			continue
 		}
 		provided := providedConfig
