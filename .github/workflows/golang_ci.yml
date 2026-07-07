@@ -1,9 +1,13 @@
 ---
-# Runs the Go checks (build, test, lint) on pull requests targeting main.
+# Runs the Go checks (build, test, lint) on pull requests targeting main and on
+# pushes to main, so issues that land on main are surfaced there too.
 name: Golang CI
 
 on:
   pull_request:
+    branches:
+      - main
+  push:
     branches:
       - main
 
