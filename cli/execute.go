@@ -43,7 +43,7 @@ func newRootCmd(fc fileConfig) *cobra.Command {
 
 func newRunCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
-	var secretResolver string
+	var secretResolver, composeFile string
 
 	cmd := &cobra.Command{
 		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
@@ -58,6 +58,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 	}
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
+	cmd.Flags().StringVar(&composeFile, "compose-file", "docker-compose.yml", "base docker compose file COMPOSE_FILE points at, relative to --root")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -80,6 +81,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			apps:        apps,
 			configDir:   shared.configDir,
 			overrideDir: shared.overrideDir,
+			composeFile: composeFile,
 			resolverFor: resolverFor,
 			command:     args[dash:],
 		})

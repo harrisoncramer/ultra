@@ -18,6 +18,7 @@ type runParams struct {
 	apps        []string
 	configDir   string
 	overrideDir string
+	composeFile string
 	resolverFor func(app string) SecretResolver
 	command     []string
 }
@@ -41,8 +42,12 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 	if overrideDir == "" {
 		overrideDir = "tmp"
 	}
+	composeFile := p.composeFile
+	if composeFile == "" {
+		composeFile = "docker-compose.yml"
+	}
 	env := os.Environ()
-	composeFiles := []string{filepath.Join(root, "docker-compose.yml")}
+	composeFiles := []string{filepath.Join(root, composeFile)}
 
 	for _, appPath := range p.apps {
 		app := appName(appPath)
