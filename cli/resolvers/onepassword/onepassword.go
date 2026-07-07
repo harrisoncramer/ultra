@@ -1,4 +1,4 @@
-package cli
+package onepassword
 
 import (
 	"bytes"
@@ -8,17 +8,19 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/cli"
+
 	"github.com/spf13/pflag"
 )
 
 func init() {
-	RegisterSecretResolver(SecretResolverCommand{
+	cli.RegisterSecretResolver(cli.SecretResolverCommand{
 		Name:  "1password",
 		Short: "Resolve secrets from 1Password via the op CLI",
-		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
+		Setup: func(fs *pflag.FlagSet) func(app string) cli.SecretResolver {
 			var vault string
 			fs.StringVar(&vault, "vault", "", "1password vault holding the secrets (required)")
-			return func(app string) SecretResolver {
+			return func(app string) cli.SecretResolver {
 				return onePassword{vault: vault, item: app}
 			}
 		},

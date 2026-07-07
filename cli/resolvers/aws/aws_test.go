@@ -1,10 +1,10 @@
-package cli
+package aws
 
 import (
 	"context"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 )
@@ -46,8 +46,8 @@ func (f *fakeBatchGet) BatchGetSecretValue(_ context.Context, in *secretsmanager
 			continue
 		}
 		out.SecretValues = append(out.SecretValues, smtypes.SecretValueEntry{
-			Name:         aws.String(id),
-			SecretString: aws.String(val),
+			Name:         awssdk.String(id),
+			SecretString: awssdk.String(val),
 		})
 	}
 	return &out, nil

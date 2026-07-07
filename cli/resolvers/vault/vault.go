@@ -1,4 +1,4 @@
-package cli
+package vault
 
 import (
 	"context"
@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/harrisoncramer/ultra/cli"
+
 	"github.com/spf13/pflag"
 )
 
@@ -22,7 +24,7 @@ import (
 const vaultTimeout = 15 * time.Second
 
 func init() {
-	RegisterSecretResolver(SecretResolverCommand{
+	cli.RegisterSecretResolver(cli.SecretResolverCommand{
 		Name:  "vault",
 		Short: "Resolve secrets from HashiCorp Vault (KV v2) over its HTTP API",
 		Long: "vault reads each app's secrets from a single HashiCorp Vault KV v2 secret,\n" +
@@ -33,12 +35,12 @@ func init() {
 			"VAULT_ADDR, and the token from VAULT_TOKEN or ~/.vault-token. The standard\n" +
 			"VAULT_CACERT, VAULT_CAPATH, VAULT_CLIENT_CERT/KEY, VAULT_TLS_SERVER_NAME, and\n" +
 			"VAULT_SKIP_VERIFY TLS settings are honored.",
-		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
+		Setup: func(fs *pflag.FlagSet) func(app string) cli.SecretResolver {
 			var mount, address, namespace string
 			fs.StringVar(&mount, "mount", "secret", "KV v2 mount path the app's secret lives under")
 			fs.StringVar(&address, "address", "", "Vault address (defaults to VAULT_ADDR)")
 			fs.StringVar(&namespace, "namespace", "", "Vault namespace (Enterprise; defaults to VAULT_NAMESPACE)")
-			return func(app string) SecretResolver {
+			return func(app string) cli.SecretResolver {
 				return vaultKV{app: app, mount: mount, address: address, namespace: namespace}
 			}
 		},
