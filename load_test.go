@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	secrets "github.com/harrisoncramer/ultra/pkg/secrets"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type nestedSecrets struct {
@@ -24,34 +26,68 @@ type composedConfig struct {
 	Plain  string `env:"PLAIN"`
 }
 
-func TestSecretEnvNamesRecurses(t *testing.T) {
-	got := secrets.SecretEnvNames(reflect.TypeFor[composedConfig]())
-	sort.Strings(got)
-	want := []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"} // B_TOKEN deduped across Extra + Ptr
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
+type secretEnvNamesCase struct {
+	name string
+	typ  reflect.Type
+	want []string
+}
+
+func TestSecretEnvNames(t *testing.T) {
+	cases := []secretEnvNamesCase{
+		{
+			name: "recurses embedded, nested and pointer structs, dedups shared names",
+			typ:  reflect.TypeFor[composedConfig](),
+			want: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"},
+		},
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := secrets.SecretEnvNames(c.typ)
+			sort.Strings(got)
+			assert.Equal(t, c.want, got)
+		})
 	}
 }
 
-func TestLoadFailsOnMissingRequiredSecret(t *testing.T) {
-	type cfg struct {
-		Token string `env:"REQUIRED_SECRET_TOKEN,required,notEmpty" secret:"true"`
-	}
-	if _, err := Load(&cfg{}); err == nil {
-		t.Fatal("expected an error when a required secret is unset")
-	}
+type loadSecretCase struct {
+	name    string
+	load    func() error
+	wantErr bool
 }
 
-func TestLoadAllowsMissingOptionalSecret(t *testing.T) {
-	type cfg struct {
-		Token string `env:"OPTIONAL_SECRET_TOKEN" secret:"true"`
+func TestLoadSecretRequiredness(t *testing.T) {
+	cases := []loadSecretCase{
+		{
+			name: "env-tag required secret is rejected",
+			load: func() error {
+				type cfg struct {
+					Token string `env:"REQUIRED_SECRET_TOKEN,required,notEmpty" secret:"true"`
+				}
+				_, err := Load(&cfg{})
+				return err
+			},
+			wantErr: true,
+		},
+		{
+			name: "optional secret left unset does not fail",
+			load: func() error {
+				type cfg struct {
+					Token string `env:"OPTIONAL_SECRET_TOKEN" secret:"true"`
+				}
+				_, err := Load(&cfg{})
+				return err
+			},
+			wantErr: false,
+		},
 	}
-	if _, err := Load(&cfg{}); err != nil {
-		t.Fatalf("optional secret unset should not fail: %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.load()
+			if c.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }

@@ -7,6 +7,12 @@ linters:
     - bodyclose
     - unparam
     - exhaustive
+    - errorlint
+    - misspell
+    - unconvert
+    - nilerr
+    - copyloopvar
+    - gocritic
   settings:
     depguard:
       rules:
@@ -41,6 +47,9 @@ linters:
       - builtin$
       - examples$
 formatters:
+  enable:
+    - gofmt
+    - goimports
   exclusions:
     generated: lax
     paths:

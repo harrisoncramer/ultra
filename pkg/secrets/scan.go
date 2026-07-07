@@ -143,7 +143,7 @@ func configStruct(dir string) (*types.Struct, error) {
 	}
 	pkg := pkgs[0]
 	if len(pkg.Errors) > 0 {
-		return nil, fmt.Errorf("config package at %s has errors: %v", dir, pkg.Errors[0])
+		return nil, fmt.Errorf("config package at %s has errors: %w", dir, pkg.Errors[0])
 	}
 
 	obj := pkg.Types.Scope().Lookup("Config")

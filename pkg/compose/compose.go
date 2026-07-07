@@ -1,4 +1,6 @@
-package ultra
+// Package compose builds the docker-compose override that forwards each app's
+// resolved secrets into its container through app-namespaced launcher variables.
+package compose
 
 import (
 	"fmt"

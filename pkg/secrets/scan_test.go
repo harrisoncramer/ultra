@@ -2,130 +2,152 @@ package secrets
 
 import (
 	"path/filepath"
-	"slices"
 	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// sortedNames scans a fixture package under testdata and returns its secret env
-// names sorted for stable comparison.
-func sortedNames(t *testing.T, fixture string) []string {
+// fixtureDir is the path to a scan fixture package under testdata.
+func fixtureDir(fixture string) string {
+	return filepath.Join("..", "testdata", "scan", fixture)
+}
+
+// fieldsByName type-checks a fixture and indexes its fields by env-var name.
+func fieldsByName(t *testing.T, fixture string) map[string]Field {
 	t.Helper()
-	got, err := SecretNames(filepath.Join("..", "testdata", "scan", fixture))
-	if err != nil {
-		t.Fatalf("SecretNames(%s): %v", fixture, err)
-	}
-	sort.Strings(got)
-	return got
-}
-
-func TestSecretNamesFlat(t *testing.T) {
-	if got, want := sortedNames(t, "flat"), []string{"SECRET_TOKEN"}; !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-}
-
-func TestSecretNamesEmbeddedAndNested(t *testing.T) {
-	if got, want := sortedNames(t, "composed"), []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"}; !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-}
-
-func TestFieldsSecretAndRequired(t *testing.T) {
-	got, err := Fields(filepath.Join("..", "testdata", "scan", "flat"))
-	if err != nil {
-		t.Fatalf("Fields(flat): %v", err)
-	}
-	byName := map[string]Field{}
-	for _, f := range got {
-		byName[f.Name] = f
-	}
-
-	plain, ok := byName["PLAIN"]
-	if !ok || len(plain.RequiredEnvs) != 0 || plain.Secret {
-		t.Errorf("PLAIN = %+v, want present, never required, not secret", plain)
-	}
-	secret, ok := byName["SECRET_TOKEN"]
-	if !ok || !slices.Equal(secret.RequiredEnvs, []string{"*"}) || !secret.Secret {
-		t.Errorf("SECRET_TOKEN = %+v, want present, required everywhere, secret", secret)
-	}
-}
-
-func TestFieldsRequiredEnvs(t *testing.T) {
-	fields, err := Fields(filepath.Join("..", "testdata", "scan", "scoped"))
-	if err != nil {
-		t.Fatalf("Fields(scoped): %v", err)
-	}
-	byName := map[string]Field{}
+	fields, err := Fields(fixtureDir(fixture))
+	require.NoError(t, err)
+	byName := make(map[string]Field, len(fields))
 	for _, f := range fields {
 		byName[f.Name] = f
 	}
+	return byName
+}
 
-	cases := []struct {
-		name         string
-		wantRequired []string
-		wantSec      bool
-	}{
-		{"ALWAYS", []string{"*"}, false},
-		{"API_KEY", []string{"*"}, true},
-		{"PROD_TOKEN", []string{"production"}, true}, // inherited from the embedded ProdOnly
-		{"OVERRIDE", []string{"staging"}, false},     // field-level override wins
-		{"LOCAL_URL", []string{"local"}, false},
-		{"OPTIONAL", nil, false},
+type secretNamesCase struct {
+	name    string
+	fixture string
+	want    []string
+	wantErr bool
+}
+
+func TestSecretNames(t *testing.T) {
+	cases := []secretNamesCase{
+		{name: "flat", fixture: "flat", want: []string{"SECRET_TOKEN"}},
+		{name: "embedded and nested", fixture: "composed", want: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"}},
+		{name: "cross-package sub-struct", fixture: "crosspkg", want: []string{"LOCAL_TOKEN", "SUB_TOKEN"}},
+		{name: "no exported Config struct errors", fixture: "noconfig", wantErr: true},
 	}
 	for _, c := range cases {
-		f, ok := byName[c.name]
-		if !ok {
-			t.Errorf("%s: not found", c.name)
-			continue
-		}
-		if !slices.Equal(f.RequiredEnvs, c.wantRequired) {
-			t.Errorf("%s: RequiredEnvs = %v, want %v", c.name, f.RequiredEnvs, c.wantRequired)
-		}
-		if f.Secret != c.wantSec {
-			t.Errorf("%s: secret = %v, want %v", c.name, f.Secret, c.wantSec)
-		}
-	}
-
-	// RequiredIn resolves the required environments against a target environment.
-	req := map[string]map[string]bool{
-		"production": {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": true, "OVERRIDE": false, "LOCAL_URL": false, "OPTIONAL": false},
-		"local":      {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": false, "OVERRIDE": false, "LOCAL_URL": true, "OPTIONAL": false},
-		"staging":    {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": false, "OVERRIDE": true, "LOCAL_URL": false, "OPTIONAL": false},
-	}
-	for env, want := range req {
-		for name, w := range want {
-			if got := byName[name].RequiredIn(env); got != w {
-				t.Errorf("RequiredIn(%q) for %s = %v, want %v", env, name, got, w)
+		t.Run(c.name, func(t *testing.T) {
+			got, err := SecretNames(fixtureDir(c.fixture))
+			if c.wantErr {
+				require.Error(t, err)
+				return
 			}
-		}
+			require.NoError(t, err)
+			sort.Strings(got)
+			assert.Equal(t, c.want, got)
+		})
 	}
 }
 
-func TestFieldsRejectsEnvTagRequired(t *testing.T) {
-	if _, err := Fields(filepath.Join("..", "testdata", "scan", "envrequired")); err == nil {
-		t.Fatal("expected an error for required/notEmpty declared in the env tag")
+type fieldCase struct {
+	name         string
+	fixture      string
+	field        string
+	wantRequired []string
+	wantSecret   bool
+}
+
+func TestFields(t *testing.T) {
+	cases := []fieldCase{
+		{"flat optional non-secret", "flat", "PLAIN", nil, false},
+		{"flat required secret", "flat", "SECRET_TOKEN", []string{"*"}, true},
+		{"scoped always-required non-secret", "scoped", "ALWAYS", []string{"*"}, false},
+		{"scoped always-required secret", "scoped", "API_KEY", []string{"*"}, true},
+		{"scoped inherits embedded required env", "scoped", "PROD_TOKEN", []string{"production"}, true},
+		{"scoped field-level override wins", "scoped", "OVERRIDE", []string{"staging"}, false},
+		{"scoped local-scoped field", "scoped", "LOCAL_URL", []string{"local"}, false},
+		{"scoped optional field", "scoped", "OPTIONAL", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, ok := fieldsByName(t, c.fixture)[c.field]
+			require.True(t, ok, "%s: field %s not found", c.fixture, c.field)
+			assert.Equal(t, c.wantRequired, f.RequiredEnvs)
+			assert.Equal(t, c.wantSecret, f.Secret)
+		})
 	}
 }
 
-func TestSecretNamesCrossPackage(t *testing.T) {
-	if got, want := sortedNames(t, "crosspkg"), []string{"LOCAL_TOKEN", "SUB_TOKEN"}; !slices.Equal(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
+type requiredInCase struct {
+	name  string
+	field string
+	env   string
+	want  bool
+}
+
+func TestFieldRequiredIn(t *testing.T) {
+	cases := []requiredInCase{
+		{"always required in production", "ALWAYS", "production", true},
+		{"always required in local", "ALWAYS", "local", true},
+		{"always required in staging", "ALWAYS", "staging", true},
+		{"api key required in production", "API_KEY", "production", true},
+		{"prod token required in production", "PROD_TOKEN", "production", true},
+		{"prod token not required in local", "PROD_TOKEN", "local", false},
+		{"prod token not required in staging", "PROD_TOKEN", "staging", false},
+		{"override required only in staging", "OVERRIDE", "staging", true},
+		{"override not required in production", "OVERRIDE", "production", false},
+		{"override not required in local", "OVERRIDE", "local", false},
+		{"local url required only in local", "LOCAL_URL", "local", true},
+		{"local url not required in production", "LOCAL_URL", "production", false},
+		{"optional never required in production", "OPTIONAL", "production", false},
+		{"optional never required in local", "OPTIONAL", "local", false},
+		{"optional never required in staging", "OPTIONAL", "staging", false},
+	}
+	byName := fieldsByName(t, "scoped")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, byName[c.field].RequiredIn(c.env))
+		})
 	}
 }
 
-func TestSecretNamesNoConfig(t *testing.T) {
-	if _, err := SecretNames(filepath.Join("..", "testdata", "scan", "noconfig")); err == nil {
-		t.Fatal("expected error for a package without an exported Config struct")
+type fieldsErrorCase struct {
+	name    string
+	fixture string
+}
+
+func TestFieldsRejectsEnvTagOptions(t *testing.T) {
+	cases := []fieldsErrorCase{
+		{"required/notEmpty in the env tag", "envrequired"},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Fields(fixtureDir(c.fixture))
+			require.Error(t, err)
+		})
+	}
+}
+
+type importPathCase struct {
+	name    string
+	fixture string
+	want    string
 }
 
 func TestConfigImportPath(t *testing.T) {
-	got, err := ConfigImportPath(filepath.Join("..", "testdata", "scan", "flat"))
-	if err != nil {
-		t.Fatal(err)
+	cases := []importPathCase{
+		{"flat fixture import path", "flat", "github.com/harrisoncramer/ultra/pkg/testdata/scan/flat"},
 	}
-	if want := "github.com/harrisoncramer/ultra/pkg/testdata/scan/flat"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ConfigImportPath(fixtureDir(c.fixture))
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
 	}
 }

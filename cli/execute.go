@@ -90,6 +90,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 func newValidateCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
 	var secretResolver, configResolver, environment string
+	var rejectUnreferenced bool
 
 	cmd := &cobra.Command{
 		Use:   "validate [app-path...] --secret-resolver <name> [flags]",
@@ -106,6 +107,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
 	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
+	cmd.Flags().BoolVar(&rejectUnreferenced, "reject-unreferenced", false, "fail an app when a resolver provides a key no Config field references")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
@@ -128,12 +130,13 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		return validate(cmd.Context(), validateParams{
-			root:           shared.root,
-			apps:           apps,
-			configDir:      shared.configDir,
-			environment:    environment,
-			secretResolver: resolverFor,
-			configResolver: cr,
+			root:               shared.root,
+			apps:               apps,
+			configDir:          shared.configDir,
+			environment:        environment,
+			rejectUnreferenced: rejectUnreferenced,
+			secretResolver:     resolverFor,
+			configResolver:     cr,
 		})
 	}
 	return cmd
@@ -142,6 +145,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 func newLintCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
 	var secretResolver, configResolver, environment string
+	var rejectUnreferenced bool
 
 	cmd := &cobra.Command{
 		Use:   "lint [app-path...] --secret-resolver <name> [flags]",
@@ -160,6 +164,7 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
 	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
+	cmd.Flags().BoolVar(&rejectUnreferenced, "reject-unreferenced", false, "fail an app when a resolver provides a key no Config field references")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
@@ -182,12 +187,13 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		return lint(cmd.Context(), lintParams{
-			root:           shared.root,
-			apps:           apps,
-			configDir:      shared.configDir,
-			environment:    environment,
-			secretResolver: resolverFor,
-			configResolver: cr,
+			root:               shared.root,
+			apps:               apps,
+			configDir:          shared.configDir,
+			environment:        environment,
+			rejectUnreferenced: rejectUnreferenced,
+			secretResolver:     resolverFor,
+			configResolver:     cr,
 		})
 	}
 	return cmd

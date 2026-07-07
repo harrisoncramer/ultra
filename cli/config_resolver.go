@@ -35,7 +35,7 @@ func init() {
 	RegisterConfigResolver(ConfigResolverCommand{
 		Name:  "docker-compose",
 		Short: "Read non-secret config from docker-compose.yml",
-		Setup: func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+		Setup: func(_ *pflag.FlagSet) func(root string) (ConfigResolver, error) {
 			return func(root string) (ConfigResolver, error) {
 				return &dockerComposeConfig{composeFile: filepath.Join(root, "docker-compose.yml")}, nil
 			}
@@ -44,8 +44,8 @@ func init() {
 	RegisterConfigResolver(ConfigResolverCommand{
 		Name:  "env",
 		Short: "Use the process environment (non-secrets already set, e.g. in a container or pod)",
-		Setup: func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error) {
-			return func(root string) (ConfigResolver, error) {
+		Setup: func(_ *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+			return func(_ string) (ConfigResolver, error) {
 				return envConfig{}, nil
 			}
 		},
@@ -127,6 +127,6 @@ func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]s
 // or pod) already holds them, and validate starts from the process env anyway.
 type envConfig struct{}
 
-func (envConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
+func (envConfig) Resolve(_ context.Context, _ string) (map[string]string, error) {
 	return map[string]string{}, nil
 }

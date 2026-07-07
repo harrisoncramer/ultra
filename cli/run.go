@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	compose "github.com/harrisoncramer/ultra/pkg/compose"
+	"github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/harrisoncramer/ultra/pkg/secrets"
 )
 
@@ -74,10 +74,10 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 		if len(resolved) > 0 {
 			override := filepath.Join(root, overrideDir, app+".compose.yml")
 			if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("creating override dir for %s: %w", app, err)
 			}
 			if err := os.WriteFile(override, []byte(compose.ComposeOverride(app, resolved)), 0o644); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("writing compose override for %s: %w", app, err)
 			}
 			composeFiles = append(composeFiles, override)
 		}

@@ -1,8 +1,10 @@
 package ultra
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ProdGroup is embedded with a required tag, so its fields inherit those
@@ -12,19 +14,21 @@ type ProdGroup struct {
 }
 
 type ScopedConfig struct {
-	Always    string `env:"TS_ALWAYS" required:"*"` // required in every environment
-	ProdGroup `required:"production"`                // Prod required only in production
-	Local     string `env:"TS_LOCAL" required:"local"`
-	Optional  string `env:"TS_OPTIONAL"` // never required
+	Always    string                  `env:"TS_ALWAYS" required:"*"` // required in every environment
+	ProdGroup `required:"production"` // Prod required only in production
+	Local     string                  `env:"TS_LOCAL" required:"local"`
+	Optional  string                  `env:"TS_OPTIONAL"` // never required
+}
+
+type requiredEnvCase struct {
+	name    string
+	env     string
+	set     map[string]string
+	wantErr bool
 }
 
 func TestLoadRequiredByEnvironment(t *testing.T) {
-	cases := []struct {
-		name    string
-		env     string
-		set     map[string]string
-		wantErr bool
-	}{
+	cases := []requiredEnvCase{
 		{"local with local var", "local", map[string]string{"TS_ALWAYS": "x", "TS_LOCAL": "y"}, false},
 		{"local missing local var", "local", map[string]string{"TS_ALWAYS": "x"}, true},
 		{"production missing prod var", "production", map[string]string{"TS_ALWAYS": "x"}, true},
@@ -41,34 +45,51 @@ func TestLoadRequiredByEnvironment(t *testing.T) {
 				t.Setenv(k, v)
 			}
 			_, err := Load(&ScopedConfig{}, WithEnvironment(c.env))
-			if c.wantErr && err == nil {
-				t.Fatalf("env %q with %v: expected error, got nil", c.env, c.set)
-			}
-			if !c.wantErr && err != nil {
-				t.Fatalf("env %q with %v: unexpected error: %v", c.env, c.set, err)
+			if c.wantErr {
+				require.Error(t, err, "env %q with %v", c.env, c.set)
+			} else {
+				require.NoError(t, err, "env %q with %v", c.env, c.set)
 			}
 		})
 	}
 }
 
-func TestLoadRejectsEnvTagRequired(t *testing.T) {
-	type badConfig struct {
-		Bad string `env:"TS_BAD,required"`
-	}
-	_, err := Load(&badConfig{})
-	if err == nil {
-		t.Fatal("expected an error when required is declared in the env tag")
-	}
-	if !strings.Contains(err.Error(), "TS_BAD") {
-		t.Fatalf("error should name the offending field, got: %v", err)
-	}
+type rejectEnvTagCase struct {
+	name         string
+	load         func() error
+	wantContains string
 }
 
-func TestLoadRejectsEnvTagNotEmpty(t *testing.T) {
-	type badConfig struct {
-		Bad string `env:"TS_BAD_EMPTY,notEmpty"`
+func TestLoadRejectsEnvTagOptions(t *testing.T) {
+	cases := []rejectEnvTagCase{
+		{
+			name: "required declared in the env tag",
+			load: func() error {
+				type badConfig struct {
+					Bad string `env:"TS_BAD,required"`
+				}
+				_, err := Load(&badConfig{})
+				return err
+			},
+			wantContains: "TS_BAD",
+		},
+		{
+			name: "notEmpty declared in the env tag",
+			load: func() error {
+				type badConfig struct {
+					Bad string `env:"TS_BAD_EMPTY,notEmpty"`
+				}
+				_, err := Load(&badConfig{})
+				return err
+			},
+			wantContains: "TS_BAD_EMPTY",
+		},
 	}
-	if _, err := Load(&badConfig{}); err == nil {
-		t.Fatal("expected an error when notEmpty is declared in the env tag")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.load()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, c.wantContains)
+		})
 	}
 }

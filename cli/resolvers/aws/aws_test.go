@@ -7,6 +7,8 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Tests for the AWS Secrets Manager resolver: how it names secrets
@@ -14,19 +16,25 @@ import (
 // drops missing or empty ones, and splits requests into AWS's 20-per-call batch
 // limit. A fake client stands in for the SDK, so nothing here reaches AWS.
 
+type secretIDCase struct {
+	name    string
+	app     string
+	prefix  string
+	envName string
+	want    string
+}
+
 func TestAWSSecretID(t *testing.T) {
-	cases := []struct {
-		app, prefix, name, want string
-	}{
-		{"worker", "", "GOOGLE_CLIENT_ID", "worker/GOOGLE_CLIENT_ID"},
-		{"worker", "prod", "DATABASE_URL", "prod/worker/DATABASE_URL"},
-		{"worker", "/prod/", "API_KEY", "prod/worker/API_KEY"},
+	cases := []secretIDCase{
+		{"no prefix", "worker", "", "GOOGLE_CLIENT_ID", "worker/GOOGLE_CLIENT_ID"},
+		{"with prefix", "worker", "prod", "DATABASE_URL", "prod/worker/DATABASE_URL"},
+		{"prefix slashes trimmed", "worker", "/prod/", "API_KEY", "prod/worker/API_KEY"},
 	}
 	for _, c := range cases {
-		r := awsSecretsManager{app: c.app, prefix: c.prefix}
-		if got := r.secretID(c.name); got != c.want {
-			t.Errorf("secretID(%q) app=%q prefix=%q = %q, want %q", c.name, c.app, c.prefix, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			r := awsSecretsManager{app: c.app, prefix: c.prefix}
+			assert.Equal(t, c.want, r.secretID(c.envName))
+		})
 	}
 }
 
@@ -113,26 +121,12 @@ func TestAWSResolve(t *testing.T) {
 			}
 
 			got, err := r.Resolve(context.Background(), c.requestNames)
-			if err != nil {
-				t.Fatalf("Resolve: %v", err)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, c.wantByName, got)
 
-			if len(got) != len(c.wantByName) {
-				t.Fatalf("Resolve = %v, want %v", got, c.wantByName)
-			}
-			for name, val := range c.wantByName {
-				if got[name] != val {
-					t.Errorf("Resolve[%q] = %q, want %q", name, got[name], val)
-				}
-			}
-
-			if len(fake.calls) != len(c.wantBatchSizes) {
-				t.Fatalf("got %d batches, want %d", len(fake.calls), len(c.wantBatchSizes))
-			}
+			require.Len(t, fake.calls, len(c.wantBatchSizes))
 			for i, want := range c.wantBatchSizes {
-				if len(fake.calls[i]) != want {
-					t.Errorf("batch %d size = %d, want %d", i, len(fake.calls[i]), want)
-				}
+				assert.Len(t, fake.calls[i], want, "batch %d", i)
 			}
 		})
 	}

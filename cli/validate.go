@@ -14,12 +14,13 @@ import (
 )
 
 type validateParams struct {
-	root           string
-	apps           []string
-	configDir      string
-	environment    string
-	secretResolver func(app string) SecretResolver
-	configResolver ConfigResolver
+	root               string
+	apps               []string
+	configDir          string
+	environment        string
+	rejectUnreferenced bool
+	secretResolver     func(app string) SecretResolver
+	configResolver     ConfigResolver
 }
 
 // validate reconstructs the environment each app would boot with — its
@@ -51,9 +52,15 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	if err != nil {
 		return err
 	}
-	names, err := secrets.SecretNames(dir)
+	fields, err := secrets.Fields(dir)
 	if err != nil {
 		return err
+	}
+	var names []string
+	for _, f := range fields {
+		if f.Secret {
+			names = append(names, f.Name)
+		}
 	}
 
 	// The full env the app would see: process env, then the platform's non-secret
@@ -81,13 +88,25 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 		}
 	}
 
+	// With rejectUnreferenced, a resolver handing back a key no Config field reads
+	// is a config drift — a stale compose var or a vault entry nothing consumes —
+	// so fail rather than silently ignoring it.
+	if p.rejectUnreferenced {
+		declared := declaredNames(fields)
+		extra := append(unreferenced(secretVals, declared), unreferenced(configVals, declared)...)
+		if len(extra) > 0 {
+			sort.Strings(extra)
+			return fmt.Errorf("resolvers provided unreferenced keys: %s", strings.Join(extra, ", "))
+		}
+	}
+
 	// The generated program lives inside the app's module so it can import the
 	// config package; it is removed once validation finishes.
 	genDir := filepath.Join(filepath.Dir(dir), "ultravalidate")
 	if err := writeValidateMain(genDir, importPath, p.environment); err != nil {
 		return err
 	}
-	defer os.RemoveAll(genDir)
+	defer func() { _ = os.RemoveAll(genDir) }()
 
 	cmd := exec.CommandContext(ctx, "go", "run", ".")
 	cmd.Dir = genDir
@@ -123,7 +142,7 @@ func redactSecrets(s string, secretVals map[string]string) string {
 
 func writeValidateMain(dir, importPath, environment string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return fmt.Errorf("creating validation dir: %w", err)
 	}
 	// With an environment, load for it so a field's required tag is enforced only
 	// where it applies; without one, load plainly.
@@ -148,5 +167,8 @@ func main() {
 	}
 }
 `, importPath, loadCall)
-	return os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		return fmt.Errorf("writing validation main: %w", err)
+	}
+	return nil
 }

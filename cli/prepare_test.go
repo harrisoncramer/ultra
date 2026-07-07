@@ -6,13 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // stubResolver returns a fixed set of secret values, ignoring the requested names,
 // so a test can simulate a store that holds only a subset of an app's secrets.
 type stubResolver struct{ values map[string]string }
 
-func (s stubResolver) Resolve(ctx context.Context, names []string) (map[string]string, error) {
+func (s stubResolver) Resolve(context.Context, []string) (map[string]string, error) {
 	return s.values, nil
 }
 
@@ -22,140 +25,16 @@ func writeTestApp(t *testing.T, names ...string) string {
 	t.Helper()
 	root := t.TempDir()
 	dir := filepath.Join(root, "app", "config")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "app", "go.mod"), []byte("module testapp\n\ngo 1.25\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "app", "go.mod"), []byte("module testapp\n\ngo 1.25\n"), 0o644))
 	var b strings.Builder
 	b.WriteString("package config\n\ntype Config struct {\n")
 	for _, n := range names {
 		b.WriteString("\t" + n + " string `env:\"" + n + "\" secret:\"true\"`\n")
 	}
 	b.WriteString("}\n")
-	if err := os.WriteFile(filepath.Join(dir, "config.go"), []byte(b.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.go"), []byte(b.String()), 0o644))
 	return root
-}
-
-func TestPrepareOmitsUnresolvedSecrets(t *testing.T) {
-	root := writeTestApp(t, "RESOLVED", "MISSING")
-	p := runParams{
-		root:      root,
-		apps:      []string{"app"},
-		configDir: "config",
-		resolverFor: func(app string) SecretResolver {
-			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
-		},
-	}
-
-	prep, err := prepare(context.Background(), p)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	override := filepath.Join(root, "tmp", "app.compose.yml")
-	data, err := os.ReadFile(override)
-	if err != nil {
-		t.Fatalf("reading override: %v", err)
-	}
-	got := string(data)
-	if !strings.Contains(got, "RESOLVED:") {
-		t.Errorf("override missing resolved secret RESOLVED:\n%s", got)
-	}
-	if strings.Contains(got, "MISSING:") {
-		t.Errorf("override references unresolved secret MISSING, would clobber platform value:\n%s", got)
-	}
-
-	if !hasEnv(prep.env, "ULTRA_APP__RESOLVED", "value") {
-		t.Errorf("launcher env missing ULTRA_APP__RESOLVED=value")
-	}
-	for _, e := range prep.env {
-		if strings.HasPrefix(e, "ULTRA_APP__MISSING=") {
-			t.Errorf("launcher env forwarded unresolved secret: %q", e)
-		}
-	}
-}
-
-func TestPrepareWritesNoOverrideWhenNothingResolves(t *testing.T) {
-	root := writeTestApp(t, "MISSING")
-	p := runParams{
-		root:      root,
-		apps:      []string{"app"},
-		configDir: "config",
-		resolverFor: func(app string) SecretResolver {
-			return stubResolver{values: map[string]string{}}
-		},
-	}
-
-	prep, err := prepare(context.Background(), p)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(root, "tmp", "app.compose.yml")); !os.IsNotExist(err) {
-		t.Errorf("expected no override file when no secrets resolve, stat err = %v", err)
-	}
-	for _, f := range prep.composeFiles {
-		if strings.HasSuffix(f, "app.compose.yml") {
-			t.Errorf("composeFiles includes an override that was never written: %q", f)
-		}
-	}
-}
-
-func TestRunKeepsOverridesAfterExit(t *testing.T) {
-	root := writeTestApp(t, "RESOLVED")
-	p := runParams{
-		root:      root,
-		apps:      []string{"app"},
-		configDir: "config",
-		resolverFor: func(app string) SecretResolver {
-			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
-		},
-		command: []string{"true"},
-	}
-
-	if err := run(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := os.Stat(filepath.Join(root, "tmp", "app.compose.yml")); err != nil {
-		t.Errorf("override not kept after run, stat err = %v", err)
-	}
-}
-
-func TestPrepareHonorsOverrideDir(t *testing.T) {
-	root := writeTestApp(t, "RESOLVED")
-	p := runParams{
-		root:        root,
-		apps:        []string{"app"},
-		configDir:   "config",
-		overrideDir: "ultra/overrides",
-		resolverFor: func(app string) SecretResolver {
-			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
-		},
-	}
-
-	prep, err := prepare(context.Background(), p)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	override := filepath.Join(root, "ultra", "overrides", "app.compose.yml")
-	if _, err := os.Stat(override); err != nil {
-		t.Errorf("override not written to configured dir, stat err = %v", err)
-	}
-	found := false
-	for _, f := range prep.composeFiles {
-		if f == override {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("composeFiles missing configured override %q: %v", override, prep.composeFiles)
-	}
 }
 
 func hasEnv(env []string, key, val string) bool {
@@ -166,4 +45,125 @@ func hasEnv(env []string, key, val string) bool {
 		}
 	}
 	return false
+}
+
+type prepareCase struct {
+	name        string
+	appNames    []string          // secret env names the throwaway config declares
+	resolved    map[string]string // what the stub resolver returns
+	overrideDir string            // override dir under root ("" = default "tmp")
+	useRun      bool              // drive through run() instead of prepare()
+	command     []string          // command for run()
+
+	wantOverride bool     // whether the override file should exist
+	wantContains []string // substrings the override file must contain
+	wantAbsent   []string // substrings the override file must not contain
+
+	wantEnv          map[string]string // launcher vars that must be present (prepare only)
+	wantEnvAbsentPfx []string          // launcher var prefixes that must be absent (prepare only)
+}
+
+func TestPrepare(t *testing.T) {
+	cases := []prepareCase{
+		{
+			name:             "omits unresolved secrets from the override and env",
+			appNames:         []string{"RESOLVED", "MISSING"},
+			resolved:         map[string]string{"RESOLVED": "value"},
+			wantOverride:     true,
+			wantContains:     []string{"RESOLVED:"},
+			wantAbsent:       []string{"MISSING:"},
+			wantEnv:          map[string]string{"ULTRA_APP__RESOLVED": "value"},
+			wantEnvAbsentPfx: []string{"ULTRA_APP__MISSING="},
+		},
+		{
+			name:         "writes no override when nothing resolves",
+			appNames:     []string{"MISSING"},
+			resolved:     map[string]string{},
+			wantOverride: false,
+		},
+		{
+			name:         "run keeps the override after the command exits",
+			appNames:     []string{"RESOLVED"},
+			resolved:     map[string]string{"RESOLVED": "value"},
+			useRun:       true,
+			command:      []string{"true"},
+			wantOverride: true,
+		},
+		{
+			name:         "honors a configured override dir",
+			appNames:     []string{"RESOLVED"},
+			resolved:     map[string]string{"RESOLVED": "value"},
+			overrideDir:  "ultra/overrides",
+			wantOverride: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := writeTestApp(t, c.appNames...)
+			p := runParams{
+				root:        root,
+				apps:        []string{"app"},
+				configDir:   "config",
+				overrideDir: c.overrideDir,
+				command:     c.command,
+				resolverFor: func(string) SecretResolver {
+					return stubResolver{values: c.resolved}
+				},
+			}
+
+			dir := c.overrideDir
+			if dir == "" {
+				dir = "tmp"
+			}
+			override := filepath.Join(root, dir, "app.compose.yml")
+
+			if c.useRun {
+				require.NoError(t, run(context.Background(), p))
+			} else {
+				prep, err := prepare(context.Background(), p)
+				require.NoError(t, err)
+				for k, v := range c.wantEnv {
+					assert.True(t, hasEnv(prep.env, k, v), "launcher env missing %s=%s", k, v)
+				}
+				for _, pfx := range c.wantEnvAbsentPfx {
+					for _, e := range prep.env {
+						assert.False(t, strings.HasPrefix(e, pfx), "launcher env forwarded unexpected var: %q", e)
+					}
+				}
+				assertComposeFiles(t, prep.composeFiles, override, c.wantOverride)
+			}
+
+			assertOverrideFile(t, override, c)
+		})
+	}
+}
+
+// assertComposeFiles checks the generated override is listed in composeFiles iff
+// it was expected to be written.
+func assertComposeFiles(t *testing.T, composeFiles []string, override string, want bool) {
+	t.Helper()
+	if want {
+		assert.Contains(t, composeFiles, override)
+	} else {
+		assert.NotContains(t, composeFiles, override)
+	}
+}
+
+// assertOverrideFile checks the override file's existence and contents against
+// the case's expectations.
+func assertOverrideFile(t *testing.T, override string, c prepareCase) {
+	t.Helper()
+	data, err := os.ReadFile(override)
+	if !c.wantOverride {
+		assert.ErrorIs(t, err, os.ErrNotExist)
+		return
+	}
+	require.NoError(t, err)
+	got := string(data)
+	for _, s := range c.wantContains {
+		assert.Contains(t, got, s)
+	}
+	for _, s := range c.wantAbsent {
+		assert.NotContains(t, got, s)
+	}
 }

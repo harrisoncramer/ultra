@@ -4,30 +4,50 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestConfigResolverSetup(t *testing.T) {
-	for _, kind := range []string{"docker-compose", "env"} {
-		rc, ok := findConfigResolver(kind)
-		if !ok {
-			t.Fatalf("findConfigResolver(%q): not registered", kind)
-		}
-		build := rc.Setup(pflag.NewFlagSet(kind, pflag.ContinueOnError))
-		if _, err := build("/tmp"); err != nil {
-			t.Errorf("building %q: %v", kind, err)
-		}
+type findConfigResolverCase struct {
+	name      string
+	resolver  string
+	wantFound bool
+}
+
+func TestFindConfigResolver(t *testing.T) {
+	cases := []findConfigResolverCase{
+		{"docker-compose is registered", "docker-compose", true},
+		{"env is registered", "env", true},
+		{"unknown resolver is missed", "nope", false},
 	}
-	if _, ok := findConfigResolver("nope"); ok {
-		t.Error("expected findConfigResolver to miss for unknown config resolver")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rc, ok := findConfigResolver(c.resolver)
+			require.Equal(t, c.wantFound, ok)
+			if !ok {
+				return
+			}
+			build := rc.Setup(pflag.NewFlagSet(c.resolver, pflag.ContinueOnError))
+			_, err := build("/tmp")
+			assert.NoError(t, err)
+		})
 	}
 }
 
+type envConfigResolverCase struct {
+	name string
+	app  string
+}
+
 func TestEnvConfigResolverIsEmpty(t *testing.T) {
-	got, err := envConfig{}.Resolve(t.Context(), "worker")
-	if err != nil {
-		t.Fatal(err)
+	cases := []envConfigResolverCase{
+		{"env resolver provides no values", "worker"},
 	}
-	if len(got) != 0 {
-		t.Errorf("env config resolver returned %v, want empty", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := envConfig{}.Resolve(t.Context(), c.app)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
 	}
 }
