@@ -11,23 +11,25 @@ import (
 // required is missing or malformed. Apps depend on this instead of the env
 // library directly, so config parsing, and the underlying dependency, is
 // controlled in one place. Fields tagged `secret:"true"` are read here like any
-// other; required ones fail the parse when unset.
+// other.
 //
-// Pass WithEnvironment to declare the environment cfg is loaded for. A field
-// tagged `envScope:"a,b"` is then required only when that environment is a or b,
-// and ignored otherwise — so one Config can describe every environment and each
-// environment enforces only its own required fields.
+// Required-ness is declared with the required tag, not the env library's
+// required/notEmpty options (Load rejects those). A field tagged `required:"*"`
+// must be set and non-empty in every environment; `required:"a,b"` only in
+// environments a or b, named via WithEnvironment; and an untagged field is never
+// required. So one Config describes every environment and each enforces only its
+// own required fields.
 func Load[T any](cfg *T, opts ...Option) (*T, error) {
 	o := newLoadOptions(opts)
 
-	if conflicts := scopeConflicts(cfg); len(conflicts) > 0 {
-		return nil, fmt.Errorf("failed to load config: %s combine envScope with required/notEmpty in the env tag; envScope already makes a field required within its environments", strings.Join(conflicts, ", "))
+	if bad := envTagRequiredFields(cfg); len(bad) > 0 {
+		return nil, fmt.Errorf("failed to load config: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead (e.g. `required:\"*\"`)", strings.Join(bad, ", "))
 	}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	if missing := missingScopedRequired(cfg, o.environment); len(missing) > 0 {
-		return nil, fmt.Errorf("failed to load config: environment %q requires %s to be set", o.environment, strings.Join(missing, ", "))
+	if missing := missingRequired(cfg, o.environment); len(missing) > 0 {
+		return nil, fmt.Errorf("failed to load config: %s required but not set for environment %q", strings.Join(missing, ", "), o.environment)
 	}
 	return cfg, nil
 }

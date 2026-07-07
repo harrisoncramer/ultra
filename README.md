@@ -179,26 +179,27 @@ ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker comp
 
 ## Environments
 
-Some fields are only required in some environments. Rather than splitting a `Config` into per-environment structs and switching between them by hand, tag a field with `envScope` to say which environments it applies to. A field with `envScope` is required only when the current environment is in its scope, and ignored otherwise. A field with no `envScope` behaves as before: required everywhere its env tag says so.
+Which fields are required can vary by environment. Declare it with the `required` tag: `*` means every environment, a comma-separated list means only those, and no tag means never required. A required field must be set and non-empty in an environment it applies to.
 
 ```go
 type Config struct {
-	DatabaseURL string `env:"DATABASE_URL,required,notEmpty" secret:"true"` // every environment
-	SigningKey  string `env:"SIGNING_KEY" secret:"true" envScope:"production,staging"`
-	DevUploadURL string `env:"DEV_UPLOAD_URL" envScope:"local"`
+	DatabaseURL  string `env:"DATABASE_URL" secret:"true" required:"*"`
+	SigningKey   string `env:"SIGNING_KEY" secret:"true" required:"production,staging"`
+	DevUploadURL string `env:"DEV_UPLOAD_URL" required:"local"`
+	Optional     string `env:"OPTIONAL"` // no required tag: never required
 }
 ```
 
-`envScope` already makes a field required within its environments, so it must not be combined with `required`/`notEmpty` in the same env tag — `Load` reports that as an error. An `envScope` on an embedded or nested struct applies to all of its fields, so a group of environment-specific fields can be scoped once:
+Required-ness lives only in the `required` tag. The env library's own `required`/`notEmpty` options are not used — `Load` rejects them — so there is a single, environment-aware source of truth. A `required` tag on an embedded or nested struct applies to all of its fields, so a group of environment-specific fields can be declared once:
 
 ```go
 type Config struct {
-	Base                          // unscoped: every environment
-	DevConfig  `envScope:"local"` // all of DevConfig's fields are local-only
+	Base                          // required:"*" fields, etc.
+	DevConfig  `required:"local"` // all of DevConfig's fields are required only in local
 }
 ```
 
-Tell `Load` which environment it is loading for with `WithEnvironment`; without it, no environment matches and scoped fields are treated as optional:
+Tell `Load` which environment it is loading for with `WithEnvironment`. A `required:"*"` field is enforced regardless; a field required in specific environments is enforced only when one is given and matches:
 
 ```go
 cfg, err := ultra.Load(&config.Config{}, ultra.WithEnvironment("production"))

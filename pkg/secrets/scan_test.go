@@ -31,7 +31,7 @@ func TestSecretNamesEmbeddedAndNested(t *testing.T) {
 	}
 }
 
-func TestFieldsFlagsRequiredAndSecret(t *testing.T) {
+func TestFieldsSecretAndRequired(t *testing.T) {
 	got, err := Fields(filepath.Join("..", "testdata", "scan", "flat"))
 	if err != nil {
 		t.Fatalf("Fields(flat): %v", err)
@@ -42,16 +42,16 @@ func TestFieldsFlagsRequiredAndSecret(t *testing.T) {
 	}
 
 	plain, ok := byName["PLAIN"]
-	if !ok || plain.Required || plain.Secret {
-		t.Errorf("PLAIN = %+v, want present, not required, not secret", plain)
+	if !ok || len(plain.RequiredEnvs) != 0 || plain.Secret {
+		t.Errorf("PLAIN = %+v, want present, never required, not secret", plain)
 	}
 	secret, ok := byName["SECRET_TOKEN"]
-	if !ok || !secret.Required || !secret.Secret {
-		t.Errorf("SECRET_TOKEN = %+v, want present, required (notEmpty), secret", secret)
+	if !ok || !slices.Equal(secret.RequiredEnvs, []string{"*"}) || !secret.Secret {
+		t.Errorf("SECRET_TOKEN = %+v, want present, required everywhere, secret", secret)
 	}
 }
 
-func TestFieldsScope(t *testing.T) {
+func TestFieldsRequiredEnvs(t *testing.T) {
 	fields, err := Fields(filepath.Join("..", "testdata", "scan", "scoped"))
 	if err != nil {
 		t.Fatalf("Fields(scoped): %v", err)
@@ -62,12 +62,12 @@ func TestFieldsScope(t *testing.T) {
 	}
 
 	cases := []struct {
-		name      string
-		wantScope []string
-		wantSec   bool
+		name         string
+		wantRequired []string
+		wantSec      bool
 	}{
-		{"ALWAYS", nil, false},
-		{"API_KEY", nil, true},
+		{"ALWAYS", []string{"*"}, false},
+		{"API_KEY", []string{"*"}, true},
 		{"PROD_TOKEN", []string{"production"}, true}, // inherited from the embedded ProdOnly
 		{"OVERRIDE", []string{"staging"}, false},     // field-level override wins
 		{"LOCAL_URL", []string{"local"}, false},
@@ -79,15 +79,15 @@ func TestFieldsScope(t *testing.T) {
 			t.Errorf("%s: not found", c.name)
 			continue
 		}
-		if !slices.Equal(f.Scope, c.wantScope) {
-			t.Errorf("%s: scope = %v, want %v", c.name, f.Scope, c.wantScope)
+		if !slices.Equal(f.RequiredEnvs, c.wantRequired) {
+			t.Errorf("%s: RequiredEnvs = %v, want %v", c.name, f.RequiredEnvs, c.wantRequired)
 		}
 		if f.Secret != c.wantSec {
 			t.Errorf("%s: secret = %v, want %v", c.name, f.Secret, c.wantSec)
 		}
 	}
 
-	// RequiredIn resolves scope against a target environment.
+	// RequiredIn resolves the required environments against a target environment.
 	req := map[string]map[string]bool{
 		"production": {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": true, "OVERRIDE": false, "LOCAL_URL": false, "OPTIONAL": false},
 		"local":      {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": false, "OVERRIDE": false, "LOCAL_URL": true, "OPTIONAL": false},
@@ -99,6 +99,12 @@ func TestFieldsScope(t *testing.T) {
 				t.Errorf("RequiredIn(%q) for %s = %v, want %v", env, name, got, w)
 			}
 		}
+	}
+}
+
+func TestFieldsRejectsEnvTagRequired(t *testing.T) {
+	if _, err := Fields(filepath.Join("..", "testdata", "scan", "envrequired")); err == nil {
+		t.Fatal("expected an error for required/notEmpty declared in the env tag")
 	}
 }
 

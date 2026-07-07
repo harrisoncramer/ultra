@@ -125,8 +125,8 @@ func writeValidateMain(dir, importPath, environment string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// With an environment, load for it so envScope-tagged fields are required only
-	// where they apply; without one, load plainly.
+	// With an environment, load for it so a field's required tag is enforced only
+	// where it applies; without one, load plainly.
 	loadCall := "ultra.Load(&config.Config{})"
 	if environment != "" {
 		loadCall = fmt.Sprintf("ultra.Load(&config.Config{}, ultra.WithEnvironment(%q))", environment)

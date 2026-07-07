@@ -103,7 +103,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
-	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field tagged envScope is required only in its environments")
+	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
@@ -157,7 +157,7 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
-	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field tagged envScope is required only in its environments")
+	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
