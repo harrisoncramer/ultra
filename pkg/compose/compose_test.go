@@ -1,42 +1,76 @@
-package ultra_test
+package compose_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	compose "github.com/harrisoncramer/ultra/pkg/compose"
+	"github.com/harrisoncramer/ultra/pkg/compose"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+type composeVarCase struct {
+	name string
+	app  string
+	env  string
+	want string
+}
+
 func TestComposeVar(t *testing.T) {
-	cases := []struct {
-		app, name, want string
-	}{
-		{"worker", "DATABASE_URL", "ULTRA_WORKER__DATABASE_URL"},
-		{"server", "DATABASE_URL", "ULTRA_SERVER__DATABASE_URL"},
-		{"dafpay-network", "API_KEY", "ULTRA_DAFPAY_NETWORK__API_KEY"},
+	cases := []composeVarCase{
+		{"simple app", "worker", "DATABASE_URL", "ULTRA_WORKER__DATABASE_URL"},
+		{"other app, same name", "server", "DATABASE_URL", "ULTRA_SERVER__DATABASE_URL"},
+		{"hyphen sanitized to underscore", "dafpay-network", "API_KEY", "ULTRA_DAFPAY_NETWORK__API_KEY"},
 	}
 	for _, c := range cases {
-		if got := compose.ComposeVar(c.app, c.name); got != c.want {
-			t.Errorf("ComposeVar(%q, %q) = %q, want %q", c.app, c.name, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, compose.ComposeVar(c.app, c.env))
+		})
 	}
+}
+
+type composeCollisionCase struct {
+	name    string
+	appA    string
+	appB    string
+	envName string
 }
 
 func TestComposeVarNoCollisionAcrossApps(t *testing.T) {
-	// The same secret name in two apps must map to distinct launcher variables.
-	if a, b := compose.ComposeVar("worker", "DATABASE_URL"), compose.ComposeVar("server", "DATABASE_URL"); a == b {
-		t.Fatalf("expected distinct vars for the same name in different apps, both were %q", a)
+	cases := []composeCollisionCase{
+		{"same name in two apps maps to distinct vars", "worker", "server", "DATABASE_URL"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := compose.ComposeVar(c.appA, c.envName)
+			b := compose.ComposeVar(c.appB, c.envName)
+			assert.NotEqual(t, a, b)
+		})
 	}
 }
 
+type composeOverrideCase struct {
+	name       string
+	app        string
+	envNames   []string
+	goldenFile string
+}
+
 func TestComposeOverride(t *testing.T) {
-	want, err := os.ReadFile(filepath.Join("..", "testdata", "worker_override.golden"))
-	if err != nil {
-		t.Fatal(err)
+	cases := []composeOverrideCase{
+		{
+			name:       "worker override matches golden",
+			app:        "worker",
+			envNames:   []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"},
+			goldenFile: "worker_override.golden",
+		},
 	}
-	got := compose.ComposeOverride("worker", []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"})
-	if got != string(want) {
-		t.Errorf("ComposeOverride mismatch:\n got: %q\nwant: %q", got, string(want))
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			want, err := os.ReadFile(filepath.Join("..", "testdata", c.goldenFile))
+			require.NoError(t, err)
+			assert.Equal(t, string(want), compose.ComposeOverride(c.app, c.envNames))
+		})
 	}
 }

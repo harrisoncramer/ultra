@@ -101,7 +101,7 @@ func (v vaultKV) Resolve(ctx context.Context, names []string) (map[string]string
 	if err != nil {
 		return nil, fmt.Errorf("reading %s/%s from vault: %w", v.mount, v.app, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("vault read %s/%s: %s: %s", v.mount, v.app, resp.Status, strings.TrimSpace(string(body)))

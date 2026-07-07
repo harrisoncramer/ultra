@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Tidy go.mod and sync the module cache."
+
+go mod tidy
+go mod download

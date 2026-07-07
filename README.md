@@ -262,6 +262,12 @@ ultra lint apps/server apps/worker --secret-resolver aws-secret-manager --region
 
 Use `lint` to catch config drift early — a required field added in code but missing from the platform's config or secret declarations — and `validate` where the real values are available, such as local development or an in-cluster job.
 
+Both commands take `--reject-unreferenced`, which tightens the check: on top of failing when a required key is unprovided, it also fails when a resolver provides a key no `Config` field references. That catches the other half of config drift — a stale compose variable or a vault entry nothing consumes.
+
+```bash
+ultra lint apps/server --secret-resolver aws-secret-manager --region us-east-1 --reject-unreferenced
+```
+
 ### Config resolvers
 
 The `--config-resolver` is used by the `ultra validate` and `ultra lint` commands. It tells them where the non-secret values live: `validate` uses it to rebuild the boot environment, and `lint` uses it to learn which non-secret keys the platform will provide. Pick one with `--config-resolver` (default `docker-compose`):

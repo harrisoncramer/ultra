@@ -9,8 +9,8 @@ type Base struct {
 // ProdOnly is embedded with a required tag, so its fields inherit those
 // environments unless they declare their own.
 type ProdOnly struct {
-	ProdToken string `env:"PROD_TOKEN" secret:"true"`     // inherits production
-	Override  string `env:"OVERRIDE" required:"staging"`  // own required overrides the inherited one
+	ProdToken string `env:"PROD_TOKEN" secret:"true"`    // inherits production
+	Override  string `env:"OVERRIDE" required:"staging"` // own required overrides the inherited one
 }
 
 type Config struct {

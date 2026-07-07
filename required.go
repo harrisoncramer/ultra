@@ -138,7 +138,7 @@ func envTagRequiredFields(cfg any) []string {
 // its required tag ("*" meaning all); outside them it is ignored.
 func missingRequired(cfg any, environment string) []string {
 	var out []string
-	eachEnvField(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, envOpts string, requiredEnvs []string, val reflect.Value) {
+	eachEnvField(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, _ string, requiredEnvs []string, val reflect.Value) {
 		if requiredIn(requiredEnvs, environment) && val.IsZero() {
 			out = append(out, name)
 		}

@@ -7,121 +7,143 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+type vaultResolveCase struct {
+	name       string
+	body       string // JSON the KV v2 read endpoint returns
+	status     int    // HTTP status to reply with (0 means 200)
+	names      []string
+	wantErr    bool
+	wantValues map[string]string // keys that must be present with these values
+	wantAbsent []string          // keys that must not be present
+	wantPath   string            // expected request path ("" skips the check)
+	wantToken  string            // expected X-Vault-Token ("" skips the check)
+}
+
 func TestVaultResolve(t *testing.T) {
-	var gotPath, gotToken string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotToken = r.Header.Get("X-Vault-Token")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"data":{"DATABASE_URL":"postgres://x","GOOGLE_CLIENT_ID":"abc"}}}`))
-	}))
-	defer srv.Close()
+	cases := []vaultResolveCase{
+		{
+			name:       "maps requested keys, omits missing and unrequested",
+			body:       `{"data":{"data":{"DATABASE_URL":"postgres://x","GOOGLE_CLIENT_ID":"abc"}}}`,
+			names:      []string{"DATABASE_URL", "MISSING"},
+			wantValues: map[string]string{"DATABASE_URL": "postgres://x"},
+			wantAbsent: []string{"MISSING", "GOOGLE_CLIENT_ID"},
+			wantPath:   "/v1/secret/data/worker",
+			wantToken:  "test-token",
+		},
+		{
+			name:  "renders non-string values, keeps empty strings",
+			body:  `{"data":{"data":{"PORT":8080,"DEBUG":true,"NAME":"worker","EMPTY":""}}}`,
+			names: []string{"PORT", "DEBUG", "NAME", "EMPTY"},
+			wantValues: map[string]string{
+				"PORT":  "8080",
+				"DEBUG": "true",
+				"NAME":  "worker",
+				"EMPTY": "",
+			},
+		},
+		{
+			name:    "non-200 status is fatal",
+			body:    `{"errors":["permission denied"]}`,
+			status:  http.StatusForbidden,
+			names:   []string{"DATABASE_URL"},
+			wantErr: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var gotPath, gotToken string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotToken = r.Header.Get("X-Vault-Token")
+				w.Header().Set("Content-Type", "application/json")
+				if c.status != 0 {
+					w.WriteHeader(c.status)
+				}
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			t.Setenv("VAULT_TOKEN", "test-token")
 
-	t.Setenv("VAULT_TOKEN", "test-token")
+			r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
+			got, err := r.Resolve(t.Context(), c.names)
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 
-	r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
-	got, err := r.Resolve(t.Context(), []string{"DATABASE_URL", "MISSING"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-
-	if gotPath != "/v1/secret/data/worker" {
-		t.Errorf("request path = %q, want /v1/secret/data/worker", gotPath)
-	}
-	if gotToken != "test-token" {
-		t.Errorf("X-Vault-Token = %q, want test-token", gotToken)
-	}
-	if got["DATABASE_URL"] != "postgres://x" {
-		t.Errorf("DATABASE_URL = %q, want postgres://x", got["DATABASE_URL"])
-	}
-	if _, ok := got["MISSING"]; ok {
-		t.Errorf("MISSING should be omitted, got %q", got["MISSING"])
-	}
-	if _, ok := got["GOOGLE_CLIENT_ID"]; ok {
-		t.Errorf("GOOGLE_CLIENT_ID was not requested and must not be returned")
+			if c.wantPath != "" {
+				assert.Equal(t, c.wantPath, gotPath)
+			}
+			if c.wantToken != "" {
+				assert.Equal(t, c.wantToken, gotToken)
+			}
+			for k, want := range c.wantValues {
+				assert.Contains(t, got, k)
+				assert.Equal(t, want, got[k])
+			}
+			for _, k := range c.wantAbsent {
+				assert.NotContains(t, got, k)
+			}
+		})
 	}
 }
 
-func TestVaultResolveNonStringValues(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"data":{"PORT":8080,"DEBUG":true,"NAME":"worker","EMPTY":""}}}`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("VAULT_TOKEN", "test-token")
-
-	r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
-	got, err := r.Resolve(t.Context(), []string{"PORT", "DEBUG", "NAME", "EMPTY"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-
-	if got["PORT"] != "8080" {
-		t.Errorf("PORT = %q, want 8080", got["PORT"])
-	}
-	if got["DEBUG"] != "true" {
-		t.Errorf("DEBUG = %q, want true", got["DEBUG"])
-	}
-	if got["NAME"] != "worker" {
-		t.Errorf("NAME = %q, want worker", got["NAME"])
-	}
-	if v, ok := got["EMPTY"]; !ok || v != "" {
-		t.Errorf("EMPTY = %q (present=%v), want empty string present", v, ok)
-	}
+type vaultTLSCase struct {
+	name    string
+	setup   func(t *testing.T, srv *httptest.Server)
+	wantErr bool
 }
 
-func TestVaultResolveErrorStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"errors":["permission denied"]}`))
-	}))
-	defer srv.Close()
-
-	t.Setenv("VAULT_TOKEN", "test-token")
-
-	r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
-	if _, err := r.Resolve(t.Context(), []string{"DATABASE_URL"}); err == nil {
-		t.Fatal("expected error on 403, got nil")
+func TestVaultResolveTLS(t *testing.T) {
+	cases := []vaultTLSCase{
+		{
+			name:    "untrusted CA fails verification",
+			setup:   func(*testing.T, *httptest.Server) {},
+			wantErr: true,
+		},
+		{
+			name: "VAULT_CACERT trusts the server",
+			setup: func(t *testing.T, srv *httptest.Server) {
+				caFile := filepath.Join(t.TempDir(), "ca.pem")
+				block := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+				require.NoError(t, os.WriteFile(caFile, block, 0o600))
+				t.Setenv("VAULT_CACERT", caFile)
+			},
+			wantErr: false,
+		},
+		{
+			name: "VAULT_SKIP_VERIFY bypasses verification",
+			setup: func(t *testing.T, _ *httptest.Server) {
+				t.Setenv("VAULT_SKIP_VERIFY", "true")
+			},
+			wantErr: false,
+		},
 	}
-}
-
-func TestVaultResolveCustomCA(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"data":{"DATABASE_URL":"postgres://x"}}}`))
 	}))
 	defer srv.Close()
-	t.Setenv("VAULT_TOKEN", "test-token")
 
-	r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("VAULT_TOKEN", "test-token")
+			c.setup(t, srv)
 
-	// The server's cert is signed by an untrusted CA, so a plain read must fail.
-	if _, err := r.Resolve(t.Context(), []string{"DATABASE_URL"}); err == nil {
-		t.Fatal("expected TLS verification failure without VAULT_CACERT")
-	}
-
-	// Writing the server's cert to VAULT_CACERT makes it trusted.
-	caFile := filepath.Join(t.TempDir(), "ca.pem")
-	pem := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
-	if err := os.WriteFile(caFile, pem, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("VAULT_CACERT", caFile)
-	got, err := r.Resolve(t.Context(), []string{"DATABASE_URL"})
-	if err != nil {
-		t.Fatalf("Resolve with VAULT_CACERT: %v", err)
-	}
-	if got["DATABASE_URL"] != "postgres://x" {
-		t.Errorf("DATABASE_URL = %q, want postgres://x", got["DATABASE_URL"])
-	}
-
-	// VAULT_SKIP_VERIFY also bypasses verification.
-	t.Setenv("VAULT_CACERT", "")
-	t.Setenv("VAULT_SKIP_VERIFY", "true")
-	if _, err := r.Resolve(t.Context(), []string{"DATABASE_URL"}); err != nil {
-		t.Fatalf("Resolve with VAULT_SKIP_VERIFY: %v", err)
+			r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
+			got, err := r.Resolve(t.Context(), []string{"DATABASE_URL"})
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "postgres://x", got["DATABASE_URL"])
+		})
 	}
 }

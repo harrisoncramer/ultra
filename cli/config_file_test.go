@@ -7,25 +7,44 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+// loadFrom writes body to a temp config file, reads it through viper, and returns
+// the flattened fileConfig.
 func loadFrom(t *testing.T, body string) fileConfig {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, configFileName), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, configFileName), []byte(body), 0o644))
 	v := viper.New()
 	v.SetConfigFile(filepath.Join(dir, configFileName))
 	v.SetConfigType("toml")
-	if err := v.ReadInConfig(); err != nil {
-		t.Fatalf("ReadInConfig: %v", err)
-	}
+	require.NoError(t, v.ReadInConfig())
 	return flatten(v)
 }
 
-func TestFlattenSections(t *testing.T) {
-	fc := loadFrom(t, `
+// withArgs swaps os.Args for the duration of the test.
+func withArgs(t *testing.T, args []string) {
+	t.Helper()
+	orig := os.Args
+	os.Args = args
+	t.Cleanup(func() { os.Args = orig })
+}
+
+type flattenCase struct {
+	name           string
+	body           string
+	wantFlags      map[string]string
+	wantFlagAbsent []string
+	wantApps       []string
+}
+
+func TestFlatten(t *testing.T) {
+	cases := []flattenCase{
+		{
+			name: "sections map onto flag names",
+			body: `
 apps-dir = "services"
 
 [secrets]
@@ -37,41 +56,27 @@ profile = "prod"
 
 [config]
 resolver = "docker-compose"
-`)
-	cases := map[string]string{
-		"secret-resolver": "aws-secret-manager",
-		"region":          "us-east-1",
-		"profile":         "prod",
-		"config-resolver": "docker-compose",
-	}
-	for flag, want := range cases {
-		if got := fc.flags[flag]; got != want {
-			t.Errorf("fc.flags[%q] = %q, want %q", flag, got, want)
-		}
-	}
-}
-
-func TestFlattenApps(t *testing.T) {
-	fc := loadFrom(t, `
+`,
+			wantFlags: map[string]string{
+				"secret-resolver": "aws-secret-manager",
+				"region":          "us-east-1",
+				"profile":         "prod",
+				"config-resolver": "docker-compose",
+			},
+		},
+		{
+			name: "apps list is read out",
+			body: `
 apps = ["apps/server", "apps/worker"]
 
 [secrets]
 resolver = "1password"
-`)
-	want := []string{"apps/server", "apps/worker"}
-	if len(fc.apps) != len(want) {
-		t.Fatalf("apps = %v, want %v", fc.apps, want)
-	}
-	for i, a := range want {
-		if fc.apps[i] != a {
-			t.Errorf("apps[%d] = %q, want %q", i, fc.apps[i], a)
-		}
-	}
-}
-
-func TestFlattenIgnoresUnselectedResolver(t *testing.T) {
-	// vault belongs to 1password; with aws-secret-manager selected it must not leak.
-	fc := loadFrom(t, `
+`,
+			wantApps: []string{"apps/server", "apps/worker"},
+		},
+		{
+			name: "unselected resolver's sub-table does not leak",
+			body: `
 [secrets]
 resolver = "aws-secret-manager"
 
@@ -80,17 +85,39 @@ region = "us-east-1"
 
 [secrets.1password]
 vault = "Engineering"
-`)
-	if _, ok := fc.flags["vault"]; ok {
-		t.Errorf("vault leaked from unselected 1password sub-table: %v", fc.flags)
+`,
+			wantFlags:      map[string]string{"region": "us-east-1"},
+			wantFlagAbsent: []string{"vault"},
+		},
 	}
-	if fc.flags["region"] != "us-east-1" {
-		t.Errorf("region = %q, want us-east-1", fc.flags["region"])
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fc := loadFrom(t, c.body)
+			for flag, want := range c.wantFlags {
+				assert.Equal(t, want, fc.flags[flag])
+			}
+			for _, flag := range c.wantFlagAbsent {
+				assert.NotContains(t, fc.flags, flag)
+			}
+			if c.wantApps != nil {
+				assert.Equal(t, c.wantApps, fc.apps)
+			}
+		})
 	}
 }
 
+type applyDefaultsCase struct {
+	name   string
+	body   string
+	preset map[string]string // flags set on the command line before applying defaults
+	want   map[string]string // expected flag values after applyConfigDefaults
+}
+
 func TestApplyConfigDefaults(t *testing.T) {
-	fc := loadFrom(t, `
+	cases := []applyDefaultsCase{
+		{
+			name: "file fills unset flags, command line wins",
+			body: `
 apps-dir = "services"
 
 [secrets]
@@ -98,92 +125,120 @@ resolver = "aws-secret-manager"
 
 [secrets.aws-secret-manager]
 region = "us-east-1"
-`)
+`,
+			preset: map[string]string{"apps-dir": "cli-apps"},
+			want: map[string]string{
+				"secret-resolver": "aws-secret-manager",
+				"region":          "us-east-1",
+				"apps-dir":        "cli-apps",
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fc := loadFrom(t, c.body)
+			cmd := &cobra.Command{Use: "run"}
+			var secretResolver, region, appsDir string
+			cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "")
+			cmd.Flags().StringVar(&region, "region", "", "")
+			cmd.Flags().StringVar(&appsDir, "apps-dir", "apps", "")
 
-	cmd := &cobra.Command{Use: "run"}
-	var secretResolver, region, appsDir string
-	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "")
-	cmd.Flags().StringVar(&region, "region", "", "")
-	cmd.Flags().StringVar(&appsDir, "apps-dir", "apps", "")
+			for flag, val := range c.preset {
+				require.NoError(t, cmd.Flags().Set(flag, val))
+			}
+			require.NoError(t, applyConfigDefaults(cmd, fc))
+			for flag, want := range c.want {
+				assert.Equal(t, want, cmd.Flags().Lookup(flag).Value.String())
+			}
+		})
+	}
+}
 
-	// Simulate --apps-dir passed on the command line; the file must not override it.
-	if err := cmd.Flags().Set("apps-dir", "cli-apps"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := applyConfigDefaults(cmd, fc); err != nil {
-		t.Fatal(err)
-	}
-	if secretResolver != "aws-secret-manager" {
-		t.Errorf("secret-resolver = %q, want aws-secret-manager", secretResolver)
-	}
-	if region != "us-east-1" {
-		t.Errorf("region = %q, want us-east-1", region)
-	}
-	if appsDir != "cli-apps" {
-		t.Errorf("apps-dir = %q, want cli-apps (command line wins)", appsDir)
-	}
+type effectiveCase struct {
+	name string
+	body string
+	flag string
+	want string
 }
 
 func TestEffectiveFromFile(t *testing.T) {
-	fc := loadFrom(t, "[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n")
-	if got := fc.effective("secret-resolver"); got != "1password" {
-		t.Errorf("effective = %q, want 1password (from file)", got)
+	const body = "[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n"
+	cases := []effectiveCase{
+		{"resolver comes from the file", body, "secret-resolver", "1password"},
+		{"unknown flag is empty", body, "missing", ""},
 	}
-	if got := fc.effective("missing"); got != "" {
-		t.Errorf("effective(missing) = %q, want empty", got)
-	}
-}
-
-func TestLoadConfigMissingFileIsEmpty(t *testing.T) {
-	t.Chdir(t.TempDir())
-	fc, err := loadConfig()
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
-	}
-	if len(fc.flags) != 0 || len(fc.apps) != 0 {
-		t.Errorf("expected empty config for a missing file, got %+v", fc)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withArgs(t, []string{"ultra", "run"})
+			fc := loadFrom(t, c.body)
+			assert.Equal(t, c.want, fc.effective(c.flag))
+		})
 	}
 }
 
-func withArgs(t *testing.T, args []string) {
-	t.Helper()
-	orig := os.Args
-	os.Args = args
-	t.Cleanup(func() { os.Args = orig })
+type loadConfigCase struct {
+	name         string
+	body         string // config file contents; empty means write no file
+	atConfigFlag bool   // write body at an explicit --config-file path
+	explicitMiss bool   // point --config-file at a nonexistent file
+	wantErr      bool
+	wantFlags    map[string]string
+	wantApps     []string
+	wantEmpty    bool // fc must have no flags and no apps
 }
 
-func TestLoadConfigFromConfigFileFlag(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "custom.toml")
-	body := "apps = [\"apps/server\"]\n\n[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+func TestLoadConfig(t *testing.T) {
+	cases := []loadConfigCase{
+		{
+			name:      "missing default file yields empty config",
+			wantEmpty: true,
+		},
+		{
+			name:         "reads an explicit --config-file",
+			body:         "apps = [\"apps/server\"]\n\n[secrets]\nresolver = \"1password\"\n\n[secrets.1password]\nvault = \"Engineering\"\n",
+			atConfigFlag: true,
+			wantFlags:    map[string]string{"secret-resolver": "1password", "vault": "Engineering"},
+			wantApps:     []string{"apps/server"},
+		},
+		{
+			name:         "explicit missing --config-file errors",
+			explicitMiss: true,
+			wantErr:      true,
+		},
 	}
-	// Chdir elsewhere so the default .ultra.toml location holds nothing.
-	t.Chdir(t.TempDir())
-	withArgs(t, []string{"ultra", "run", "--config-file", path})
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cwd := t.TempDir()
+			t.Chdir(cwd)
+			args := []string{"ultra", "run"}
+			switch {
+			case c.atConfigFlag:
+				path := filepath.Join(t.TempDir(), "custom.toml")
+				require.NoError(t, os.WriteFile(path, []byte(c.body), 0o644))
+				args = append(args, "--config-file", path)
+			case c.explicitMiss:
+				args = append(args, "--config-file", filepath.Join(t.TempDir(), "nope.toml"))
+			case c.body != "":
+				require.NoError(t, os.WriteFile(filepath.Join(cwd, configFileName), []byte(c.body), 0o644))
+			}
+			withArgs(t, args)
 
-	fc, err := loadConfig()
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
-	}
-	if fc.flags["secret-resolver"] != "1password" {
-		t.Errorf("secret-resolver = %q, want 1password", fc.flags["secret-resolver"])
-	}
-	if fc.flags["vault"] != "Engineering" {
-		t.Errorf("vault = %q, want Engineering", fc.flags["vault"])
-	}
-	if len(fc.apps) != 1 || fc.apps[0] != "apps/server" {
-		t.Errorf("apps = %v, want [apps/server]", fc.apps)
-	}
-}
-
-func TestLoadConfigExplicitMissingFileErrors(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "nope.toml")
-	withArgs(t, []string{"ultra", "run", "--config-file", missing})
-
-	if _, err := loadConfig(); err == nil {
-		t.Fatal("expected an error for an explicit missing --config-file, got nil")
+			fc, err := loadConfig()
+			if c.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			if c.wantEmpty {
+				assert.Empty(t, fc.flags)
+				assert.Empty(t, fc.apps)
+			}
+			for flag, want := range c.wantFlags {
+				assert.Equal(t, want, fc.flags[flag])
+			}
+			if c.wantApps != nil {
+				assert.Equal(t, c.wantApps, fc.apps)
+			}
+		})
 	}
 }
