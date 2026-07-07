@@ -25,7 +25,7 @@ services:
 
 Then a secret file:
 
-```bash
+```env
 LOG_LEVEL=info
 DATABASE_URL=postgres://user:pass@db:5432/app
 STRIPE_SECRET_KEY=sk_live_...
