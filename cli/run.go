@@ -17,6 +17,7 @@ type runParams struct {
 	root        string
 	apps        []string
 	configDir   string
+	overrideDir string
 	resolverFor func(app string) SecretResolver
 	command     []string
 }
@@ -27,7 +28,6 @@ type runParams struct {
 type prepared struct {
 	env          []string
 	composeFiles []string
-	overrides    []string
 }
 
 // prepare discovers every app, resolves its secrets via resolverFor, writes the
@@ -37,9 +37,12 @@ type prepared struct {
 // individual secret is not. No secret is written to disk.
 func prepare(ctx context.Context, p runParams) (*prepared, error) {
 	root := p.root
+	overrideDir := p.overrideDir
+	if overrideDir == "" {
+		overrideDir = "tmp"
+	}
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(root, "docker-compose.yml")}
-	var overrides []string
 
 	for _, appPath := range p.apps {
 		app := appName(appPath)
@@ -69,7 +72,7 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 		sort.Strings(resolved)
 
 		if len(resolved) > 0 {
-			override := filepath.Join(root, "tmp", app+".compose.yml")
+			override := filepath.Join(root, overrideDir, app+".compose.yml")
 			if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
 				return nil, err
 			}
@@ -77,13 +80,12 @@ func prepare(ctx context.Context, p runParams) (*prepared, error) {
 				return nil, err
 			}
 			composeFiles = append(composeFiles, override)
-			overrides = append(overrides, override)
 		}
 		fmt.Fprintf(os.Stderr, "ultra: resolved %d/%d secrets for %s\n", len(values), len(names), app)
 	}
 
 	env = append(env, "COMPOSE_FILE="+strings.Join(composeFiles, string(os.PathListSeparator)))
-	return &prepared{env: env, composeFiles: composeFiles, overrides: overrides}, nil
+	return &prepared{env: env, composeFiles: composeFiles}, nil
 }
 
 // run resolves every app's secrets and execs command with them set in the
@@ -93,15 +95,6 @@ func run(ctx context.Context, p runParams) error {
 	if err != nil {
 		return err
 	}
-	// The generated overrides carry only references, no secrets, but a stale one
-	// left in tmp/ could be picked up by a later launch and map a real name onto an
-	// unset variable. Remove them once the command returns; a detached `up -d` has
-	// already read them by then, and a foreground command holds until exit.
-	defer func() {
-		for _, f := range prep.overrides {
-			os.Remove(f)
-		}
-	}()
 
 	bin, err := exec.LookPath(p.command[0])
 	if err != nil {

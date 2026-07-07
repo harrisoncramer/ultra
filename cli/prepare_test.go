@@ -105,7 +105,7 @@ func TestPrepareWritesNoOverrideWhenNothingResolves(t *testing.T) {
 	}
 }
 
-func TestRunRemovesOverridesOnExit(t *testing.T) {
+func TestRunKeepsOverridesAfterExit(t *testing.T) {
 	root := writeTestApp(t, "RESOLVED")
 	p := runParams{
 		root:      root,
@@ -121,8 +121,40 @@ func TestRunRemovesOverridesOnExit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "tmp", "app.compose.yml")); !os.IsNotExist(err) {
-		t.Errorf("override not cleaned up after run, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(root, "tmp", "app.compose.yml")); err != nil {
+		t.Errorf("override not kept after run, stat err = %v", err)
+	}
+}
+
+func TestPrepareHonorsOverrideDir(t *testing.T) {
+	root := writeTestApp(t, "RESOLVED")
+	p := runParams{
+		root:        root,
+		apps:        []string{"app"},
+		configDir:   "config",
+		overrideDir: "ultra/overrides",
+		resolverFor: func(app string) SecretResolver {
+			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
+		},
+	}
+
+	prep, err := prepare(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	override := filepath.Join(root, "ultra", "overrides", "app.compose.yml")
+	if _, err := os.Stat(override); err != nil {
+		t.Errorf("override not written to configured dir, stat err = %v", err)
+	}
+	found := false
+	for _, f := range prep.composeFiles {
+		if f == override {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("composeFiles missing configured override %q: %v", override, prep.composeFiles)
 	}
 }
 

@@ -281,6 +281,7 @@ To reduce arguments and flags, ultra supports an optional `.ultra.toml` at the r
 apps = ["apps/server", "apps/worker"] # The apps to manage when none are named on the command line, plus shared flags.
 root = "."                        # --root: repo root the compose file is anchored to
 config-dir = "config"             # --config-dir: config package dir under each app path (e.g. pkg/config)
+override-dir = "tmp"              # --override-dir: dir under --root the generated compose overrides are written to; point at a committed path to keep them in version control
 
 [secrets]
 resolver = "aws-secret-manager"   # --secret-resolver
