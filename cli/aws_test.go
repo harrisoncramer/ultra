@@ -48,47 +48,83 @@ func (f *fakeBatchGet) BatchGetSecretValue(_ context.Context, in *secretsmanager
 	return &out, nil
 }
 
-func TestAWSResolveMapsNamesAndOmitsMissing(t *testing.T) {
-	fake := &fakeBatchGet{values: map[string]string{
-		"prod/worker/DATABASE_URL": "postgres://db",
-		"prod/worker/EMPTY":        "",
-	}}
-	r := awsSecretsManager{
-		app:    "worker",
-		prefix: "prod",
-		newAPI: func(context.Context) (batchGetAPI, error) { return fake, nil },
+func TestAWSResolve(t *testing.T) {
+	cases := []struct {
+		name           string
+		app            string
+		prefix         string
+		store          map[string]string // secret id -> value the fake store holds
+		request        []string          // names Resolve is asked for
+		want           map[string]string // expected trailing-name -> value
+		wantBatchSizes []int             // id count per BatchGetSecretValue call
+	}{
+		{
+			name:   "maps trailing names, omits missing and empty",
+			app:    "worker",
+			prefix: "prod",
+			store: map[string]string{
+				"prod/worker/DATABASE_URL": "postgres://db",
+				"prod/worker/EMPTY":        "",
+			},
+			request:        []string{"DATABASE_URL", "EMPTY", "ABSENT"},
+			want:           map[string]string{"DATABASE_URL": "postgres://db"},
+			wantBatchSizes: []int{3},
+		},
+		{
+			name:           "resolves without a prefix",
+			app:            "worker",
+			prefix:         "",
+			store:          map[string]string{"worker/API_KEY": "sekret"},
+			request:        []string{"API_KEY"},
+			want:           map[string]string{"API_KEY": "sekret"},
+			wantBatchSizes: []int{1},
+		},
+		{
+			name:   "batches ids in chunks of twenty",
+			app:    "worker",
+			prefix: "",
+			store:  map[string]string{},
+			request: []string{
+				"N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09", "N10",
+				"N11", "N12", "N13", "N14", "N15", "N16", "N17", "N18", "N19", "N20",
+				"N21",
+			},
+			want:           map[string]string{},
+			wantBatchSizes: []int{20, 1},
+		},
 	}
 
-	got, err := r.Resolve(context.Background(), []string{"DATABASE_URL", "EMPTY", "ABSENT"})
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	if len(got) != 1 || got["DATABASE_URL"] != "postgres://db" {
-		t.Fatalf("Resolve = %v, want only DATABASE_URL mapped back to its trailing name", got)
-	}
-}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &fakeBatchGet{values: c.store}
+			r := awsSecretsManager{
+				app:    c.app,
+				prefix: c.prefix,
+				newAPI: func(context.Context) (batchGetAPI, error) { return fake, nil },
+			}
 
-func TestAWSResolveBatchesInChunksOfTwenty(t *testing.T) {
-	names := make([]string, 45)
-	for i := range names {
-		names[i] = "N" + string(rune('A'+i%26)) + string(rune('a'+i/26))
-	}
-	fake := &fakeBatchGet{values: map[string]string{}}
-	r := awsSecretsManager{
-		app:    "worker",
-		newAPI: func(context.Context) (batchGetAPI, error) { return fake, nil },
-	}
+			got, err := r.Resolve(context.Background(), c.request)
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
 
-	if _, err := r.Resolve(context.Background(), names); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	wantSizes := []int{20, 20, 5}
-	if len(fake.calls) != len(wantSizes) {
-		t.Fatalf("got %d batches, want %d", len(fake.calls), len(wantSizes))
-	}
-	for i, want := range wantSizes {
-		if len(fake.calls[i]) != want {
-			t.Errorf("batch %d size = %d, want %d", i, len(fake.calls[i]), want)
-		}
+			if len(got) != len(c.want) {
+				t.Fatalf("Resolve = %v, want %v", got, c.want)
+			}
+			for name, val := range c.want {
+				if got[name] != val {
+					t.Errorf("Resolve[%q] = %q, want %q", name, got[name], val)
+				}
+			}
+
+			if len(fake.calls) != len(c.wantBatchSizes) {
+				t.Fatalf("got %d batches, want %d", len(fake.calls), len(c.wantBatchSizes))
+			}
+			for i, want := range c.wantBatchSizes {
+				if len(fake.calls[i]) != want {
+					t.Errorf("batch %d size = %d, want %d", i, len(fake.calls[i]), want)
+				}
+			}
+		})
 	}
 }
