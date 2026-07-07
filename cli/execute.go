@@ -22,9 +22,10 @@ func Execute() error {
 }
 
 type sharedFlags struct {
-	root       string
-	configDir  string
-	configFile string
+	root        string
+	configDir   string
+	configFile  string
+	overrideDir string
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -78,6 +79,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			root:        shared.root,
 			apps:        apps,
 			configDir:   shared.configDir,
+			overrideDir: shared.overrideDir,
 			resolverFor: resolverFor,
 			command:     args[dash:],
 		})
@@ -195,6 +197,7 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
 	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
 	cmd.Flags().StringVar(&shared.configFile, "config-file", "", "path to the ultra config file (default "+configFileName+" under --root)")
+	cmd.Flags().StringVar(&shared.overrideDir, "override-dir", "tmp", "directory under --root the generated compose overrides are written to; point it at a committed path to keep them in version control")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args
