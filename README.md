@@ -95,7 +95,7 @@ if err != nil {
 3. Validate an app, and/or run your command with secrets injected:
 
 ```bash
-ultra validate apps/worker --secret-resolver 1password --vault Engineering                     # fails fast if a required value is missing
+ultra validate apps/worker --secret-resolver 1password --vault Engineering                     # fails fast if a required value is missing, or malformed
 ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # injects DATABASE_URL and starts the container
 ```
 
@@ -185,7 +185,7 @@ Your **secret resolver** says where secrets come from (1Password, AWS Secrets Ma
 
 Your **config resolver** says where an app's non-secret configuration comes from. 
 
-The config resolver is used only by `ultra validate` and `ultra run` never uses it. See the config resolver section below for what that means and why you rarely need to change it.
+The config resolver is used by `ultra validate` and `ultra lint`; `ultra run` never uses it. See the config resolver section below for what that means and why you rarely need to change it.
 
 ```go
 type SecretResolver interface {
@@ -213,15 +213,29 @@ Ultra supports validating a configuration prior to starting a container. This is
 ultra validate apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
 ```
 
+### Linting configuration
+
+The `ultra validate` needs real secret values, because it reconstructs the environment and parses it, so it must run somewhere the secret store is reachable.
+
+The `ultra lint` command is a less-strict requirement. It takes the same resolvers as `validate` but never constructs or parses a value. It only compares the _keys_ each app's `Config` requires against the _keys its resolvers offer_, and fails if a required key is unprovided. 
+
+Because it never reads a value, it can run against a resolver that reports declared keys (from deployment manifests, for instance) rather than from the store itself, so no secret access is needed.
+
+```bash
+ultra lint apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
+```
+
+Use `lint` to catch config drift early — a required field added in code but missing from the platform's config or secret declarations — and `validate` where the real values are available, such as local development or an in-cluster job.
+
 ### Config resolvers
 
-The `--config-resolver` is only ever used by the `ultra validate` command. The resolver just tells `validate` where the non-secret values live, so it can rebuild the boot environment. Pick one with `--config-resolver` (default `docker-compose`):
+The `--config-resolver` is used by the `ultra validate` and `ultra lint` commands. It tells them where the non-secret values live: `validate` uses it to rebuild the boot environment, and `lint` uses it to learn which non-secret keys the platform will provide. Pick one with `--config-resolver` (default `docker-compose`):
 
 - `docker-compose` (default) — validating on your host, before `up`. Reads from `docker-compose.yml`
 - `env` — validate inside a running container or pod, where they're already in the environment.
 - custom — read them from somewhere else (e.g. a Kubernetes ConfigMap, to gate a deploy from CI).
 
-In short: only set `custom` if you need to validate the configuration for your app before a deploy, where the configuration lives elsewhere, such as in configuration manifests.
+In short: only set `custom` if you need to check the configuration for your app before a deploy, where the configuration lives elsewhere, such as in configuration manifests.
 
 
 ### Configuration file

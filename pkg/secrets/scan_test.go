@@ -31,6 +31,26 @@ func TestSecretNamesEmbeddedAndNested(t *testing.T) {
 	}
 }
 
+func TestFieldsFlagsRequiredAndSecret(t *testing.T) {
+	got, err := Fields(filepath.Join("..", "testdata", "scan", "flat"))
+	if err != nil {
+		t.Fatalf("Fields(flat): %v", err)
+	}
+	byName := map[string]Field{}
+	for _, f := range got {
+		byName[f.Name] = f
+	}
+
+	plain, ok := byName["PLAIN"]
+	if !ok || plain.Required || plain.Secret {
+		t.Errorf("PLAIN = %+v, want present, not required, not secret", plain)
+	}
+	secret, ok := byName["SECRET_TOKEN"]
+	if !ok || !secret.Required || !secret.Secret {
+		t.Errorf("SECRET_TOKEN = %+v, want present, required (notEmpty), secret", secret)
+	}
+}
+
 func TestSecretNamesCrossPackage(t *testing.T) {
 	if got, want := sortedNames(t, "crosspkg"), []string{"LOCAL_TOKEN", "SUB_TOKEN"}; !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
