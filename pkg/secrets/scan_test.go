@@ -51,6 +51,57 @@ func TestFieldsFlagsRequiredAndSecret(t *testing.T) {
 	}
 }
 
+func TestFieldsScope(t *testing.T) {
+	fields, err := Fields(filepath.Join("..", "testdata", "scan", "scoped"))
+	if err != nil {
+		t.Fatalf("Fields(scoped): %v", err)
+	}
+	byName := map[string]Field{}
+	for _, f := range fields {
+		byName[f.Name] = f
+	}
+
+	cases := []struct {
+		name      string
+		wantScope []string
+		wantSec   bool
+	}{
+		{"ALWAYS", nil, false},
+		{"API_KEY", nil, true},
+		{"PROD_TOKEN", []string{"production"}, true}, // inherited from the embedded ProdOnly
+		{"OVERRIDE", []string{"staging"}, false},     // field-level override wins
+		{"LOCAL_URL", []string{"local"}, false},
+		{"OPTIONAL", nil, false},
+	}
+	for _, c := range cases {
+		f, ok := byName[c.name]
+		if !ok {
+			t.Errorf("%s: not found", c.name)
+			continue
+		}
+		if !slices.Equal(f.Scope, c.wantScope) {
+			t.Errorf("%s: scope = %v, want %v", c.name, f.Scope, c.wantScope)
+		}
+		if f.Secret != c.wantSec {
+			t.Errorf("%s: secret = %v, want %v", c.name, f.Secret, c.wantSec)
+		}
+	}
+
+	// RequiredIn resolves scope against a target environment.
+	req := map[string]map[string]bool{
+		"production": {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": true, "OVERRIDE": false, "LOCAL_URL": false, "OPTIONAL": false},
+		"local":      {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": false, "OVERRIDE": false, "LOCAL_URL": true, "OPTIONAL": false},
+		"staging":    {"ALWAYS": true, "API_KEY": true, "PROD_TOKEN": false, "OVERRIDE": true, "LOCAL_URL": false, "OPTIONAL": false},
+	}
+	for env, want := range req {
+		for name, w := range want {
+			if got := byName[name].RequiredIn(env); got != w {
+				t.Errorf("RequiredIn(%q) for %s = %v, want %v", env, name, got, w)
+			}
+		}
+	}
+}
+
 func TestSecretNamesCrossPackage(t *testing.T) {
 	if got, want := sortedNames(t, "crosspkg"), []string{"LOCAL_TOKEN", "SUB_TOKEN"}; !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)

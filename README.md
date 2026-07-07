@@ -177,6 +177,40 @@ Run all Docker commands through the `ultra` CLI, so the app's secrets are presen
 ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker compose up
 ```
 
+## Environments
+
+Some fields are only required in some environments. Rather than splitting a `Config` into per-environment structs and switching between them by hand, tag a field with `envScope` to say which environments it applies to. A field with `envScope` is required only when the current environment is in its scope, and ignored otherwise. A field with no `envScope` behaves as before: required everywhere its env tag says so.
+
+```go
+type Config struct {
+	DatabaseURL string `env:"DATABASE_URL,required,notEmpty" secret:"true"` // every environment
+	SigningKey  string `env:"SIGNING_KEY" secret:"true" envScope:"production,staging"`
+	DevUploadURL string `env:"DEV_UPLOAD_URL" envScope:"local"`
+}
+```
+
+`envScope` already makes a field required within its environments, so it must not be combined with `required`/`notEmpty` in the same env tag — `Load` reports that as an error. An `envScope` on an embedded or nested struct applies to all of its fields, so a group of environment-specific fields can be scoped once:
+
+```go
+type Config struct {
+	Base                          // unscoped: every environment
+	DevConfig  `envScope:"local"` // all of DevConfig's fields are local-only
+}
+```
+
+Tell `Load` which environment it is loading for with `WithEnvironment`; without it, no environment matches and scoped fields are treated as optional:
+
+```go
+cfg, err := ultra.Load(&config.Config{}, ultra.WithEnvironment("production"))
+```
+
+`ultra validate` and `ultra lint` take the environment with `--env`, so each environment enforces only its own required fields:
+
+```bash
+ultra validate --secret-resolver aws-secret-manager --env production
+ultra lint --secret-resolver externalsecret --env staging
+```
+
 ## Resolvers
 
 Ultra supports two kinds of resolvers. 

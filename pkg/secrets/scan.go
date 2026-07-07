@@ -11,16 +11,34 @@ import (
 
 // Field is one env-var field reachable from a Config struct.
 type Field struct {
-	Name     string // env-var name (the part before the first comma of the env tag)
-	Required bool   // the env tag carries `required` or `notEmpty` — the value must be set
-	Secret   bool   // the field is tagged secret:"true"
+	Name     string   // env-var name (the part before the first comma of the env tag)
+	Required bool     // the env tag carries `required` or `notEmpty` — the value must be set
+	Secret   bool     // the field is tagged secret:"true"
+	Scope    []string // environments the field applies to (from envScope, own or inherited); nil means every environment
+}
+
+// RequiredIn reports whether the field must be provided in environment. A scoped
+// field is required exactly in the environments in its scope; an unscoped field
+// is required in every environment when its env tag says so.
+func (f Field) RequiredIn(environment string) bool {
+	if len(f.Scope) > 0 {
+		for _, s := range f.Scope {
+			if s == environment {
+				return true
+			}
+		}
+		return false
+	}
+	return f.Required
 }
 
 // Fields type-checks the Go package at dir and returns every env-var field
 // reachable from its exported Config struct, recording whether each is required
-// and secret-tagged. It follows embedded and nested struct fields wherever
-// they're defined, including sub-structs in other packages, and deduplicates by
-// env-var name. It fails if the package has no exported Config struct.
+// and secret-tagged and the environment scope that applies to it. It follows
+// embedded and nested struct fields wherever they're defined, including
+// sub-structs in other packages, propagating a struct's envScope to its fields,
+// and deduplicates by env-var name. It fails if the package has no exported
+// Config struct.
 func Fields(dir string) ([]Field, error) {
 	st, err := configStruct(dir)
 	if err != nil {
@@ -31,20 +49,27 @@ func Fields(dir string) ([]Field, error) {
 	seen := map[string]struct{}{}
 	visited := map[*types.Struct]bool{}
 
-	var visit func(s *types.Struct)
-	visit = func(s *types.Struct) {
+	var visit func(s *types.Struct, inherited []string)
+	visit = func(s *types.Struct, inherited []string) {
 		if visited[s] {
 			return
 		}
 		visited[s] = true
 		for i := 0; i < s.NumFields(); i++ {
+			tag := reflect.StructTag(s.Tag(i))
+			// A field's scope is its own envScope tag, or the one inherited from
+			// the struct it lives in. An embedded or nested struct passes its scope
+			// down to its fields.
+			scope := inherited
+			if s2, ok := tag.Lookup("envScope"); ok {
+				scope = splitScope(s2)
+			}
 			// Recurse into struct-typed fields (embedded or named), mirroring how
 			// env.Parse descends into them. Type info resolves them uniformly, so
 			// a sub-struct from another package is followed just like a local one.
 			if child := structUnder(s.Field(i).Type()); child != nil {
-				visit(child)
+				visit(child, scope)
 			}
-			tag := reflect.StructTag(s.Tag(i))
 			name, opts, _ := strings.Cut(tag.Get("env"), ",") // "NAME,required" -> "NAME", "required"
 			if name == "" {
 				continue
@@ -57,12 +82,28 @@ func Fields(dir string) ([]Field, error) {
 				Name:     name,
 				Required: hasOption(opts, "required") || hasOption(opts, "notEmpty"),
 				Secret:   tag.Get("secret") == "true",
+				Scope:    scope,
 			})
 		}
 	}
-	visit(st)
+	visit(st, nil)
 
 	return fields, nil
+}
+
+// splitScope parses a comma-separated envScope tag into its environment names.
+func splitScope(s string) []string {
+	raw := strings.Split(s, ",")
+	scope := make([]string, 0, len(raw))
+	for _, p := range raw {
+		if p = strings.TrimSpace(p); p != "" {
+			scope = append(scope, p)
+		}
+	}
+	if len(scope) == 0 {
+		return nil
+	}
+	return scope
 }
 
 // SecretNames returns the env-var names of every field tagged `secret:"true"`

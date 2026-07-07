@@ -87,7 +87,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 
 func newValidateCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
-	var secretResolver, configResolver string
+	var secretResolver, configResolver, environment string
 
 	cmd := &cobra.Command{
 		Use:   "validate [app-path...] --secret-resolver <name> [flags]",
@@ -103,6 +103,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
+	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field tagged envScope is required only in its environments")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
@@ -128,6 +129,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 			root:           shared.root,
 			apps:           apps,
 			configDir:      shared.configDir,
+			environment:    environment,
 			secretResolver: resolverFor,
 			configResolver: cr,
 		})
@@ -137,7 +139,7 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 
 func newLintCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
-	var secretResolver, configResolver string
+	var secretResolver, configResolver, environment string
 
 	cmd := &cobra.Command{
 		Use:   "lint [app-path...] --secret-resolver <name> [flags]",
@@ -155,6 +157,7 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
 	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
+	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field tagged envScope is required only in its environments")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 	configResolverFor := bindSelectedConfigResolver(cmd, fc)
 
@@ -180,6 +183,7 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 			root:           shared.root,
 			apps:           apps,
 			configDir:      shared.configDir,
+			environment:    environment,
 			secretResolver: resolverFor,
 			configResolver: cr,
 		})
