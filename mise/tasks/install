@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Build and install the ultra CLI to GOBIN"
+
+go install ./cmd/ultra

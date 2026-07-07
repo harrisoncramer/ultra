@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Runs golangci-lint across the module"
+
+FIX_ARGS=(--fix)
+if [[ "${CI:-}" == "true" ]]; then
+    FIX_ARGS=()
+fi
+
+golangci-lint run "${FIX_ARGS[@]}" --config .golangci.yaml ./... --timeout 5m

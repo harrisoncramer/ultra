@@ -1,21 +1,8 @@
 [tools]
+go = "1.25.1"
 golangci-lint = "v2.7.0"
 
 [env]
 # Install `go install`ed binaries (ultra itself) to a stable, always-on-PATH
 # location during local development, instead of mise's version-scoped go bindir.
 GOBIN = "{{env.HOME}}/go/bin"
-
-[tasks.install]
-description = "Build and install the ultra CLI to GOBIN"
-run = "go install ./cmd/ultra"
-
-[tasks.lint]
-description = "Runs golangci-lint across the module"
-run = '''
-FIX_ARGS=(--fix)
-if [[ "${CI:-}" == "true" ]]; then
-    FIX_ARGS=()
-fi
-golangci-lint run "${FIX_ARGS[@]}" --config .golangci.yaml ./... --timeout 5m
-'''

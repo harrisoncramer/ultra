@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Runs the Go test suite across the module"
+
+go test ./...

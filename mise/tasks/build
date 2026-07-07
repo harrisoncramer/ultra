@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Compiles the ultra CLI without installing it"
+
+go build ./...
