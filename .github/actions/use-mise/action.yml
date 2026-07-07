@@ -1,0 +1,16 @@
+name: Use Mise
+description: Install the mise-managed toolchain (Go, golangci-lint) with caching.
+
+inputs:
+  cache:
+    description: Whether to enable mise-action built-in caching.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install mise tools
+      uses: jdx/mise-action@v2
+      with:
+        cache: ${{ inputs.cache == 'true' }}
