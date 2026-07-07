@@ -1,12 +1,27 @@
 package cli
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDockerComposeResolverHonorsComposeFile(t *testing.T) {
+	rc, ok := findConfigResolver("docker-compose")
+	require.True(t, ok)
+	fs := pflag.NewFlagSet("docker-compose", pflag.ContinueOnError)
+	build := rc.Setup(fs)
+	require.NoError(t, fs.Set("compose-file", "docker-compose.lake.yml"))
+
+	cr, err := build("/repo")
+	require.NoError(t, err)
+	dc, ok := cr.(*dockerComposeConfig)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join("/repo", "docker-compose.lake.yml"), dc.composeFile)
+}
 
 type findConfigResolverCase struct {
 	name      string

@@ -272,11 +272,18 @@ ultra lint apps/server --secret-resolver aws-secret-manager --region us-east-1 -
 
 The `--config-resolver` is used by the `ultra validate` and `ultra lint` commands. It tells them where the non-secret values live: `validate` uses it to rebuild the boot environment, and `lint` uses it to learn which non-secret keys the platform will provide. Pick one with `--config-resolver` (default `docker-compose`):
 
-- `docker-compose` (default) — validating on your host, before `up`. Reads from `docker-compose.yml`
+- `docker-compose` (default) — validating on your host, before `up`. Reads from `docker-compose.yml`, or the file given by `--compose-file`.
 - `env` — validate inside a running container or pod, where they're already in the environment.
 - custom — read them from somewhere else (e.g. a Kubernetes ConfigMap, to gate a deploy from CI).
 
 In short: only set `custom` if you need to check the configuration for your app before a deploy, where the configuration lives elsewhere, such as in configuration manifests.
+
+Projects with more than one compose file — a sandbox stack, a standalone service like a data lake — set `--compose-file` (relative to `--root`) to point at the right one. The same flag feeds `ultra run`, so a per-project config file targets its own compose file end to end: give each its own `.ultra.<project>.toml` with `compose-file` set, and both validate and run follow it.
+
+```bash
+ultra validate --config-file ultra/lake.toml    # lake.toml sets compose-file = "docker-compose.lake.yml"
+ultra run --config-file ultra/lake.toml -- docker compose up
+```
 
 
 ### Configuration file
@@ -288,6 +295,7 @@ apps = ["apps/server", "apps/worker"] # The apps to manage when none are named o
 root = "."                        # --root: repo root the compose file is anchored to
 config-dir = "config"             # --config-dir: config package dir under each app path (e.g. pkg/config)
 override-dir = "tmp"              # --override-dir: dir under --root the generated compose overrides are written to; point at a committed path to keep them in version control
+compose-file = "docker-compose.yml" # --compose-file: the compose file run and the docker-compose resolver target, relative to --root
 
 [secrets]
 resolver = "aws-secret-manager"   # --secret-resolver

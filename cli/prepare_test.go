@@ -138,6 +138,22 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
+func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
+	root := writeTestApp(t, "RESOLVED")
+	prep, err := prepare(context.Background(), runParams{
+		root:        root,
+		apps:        []string{"app"},
+		configDir:   "config",
+		composeFile: "docker-compose.lake.yml",
+		resolverFor: func(string) SecretResolver {
+			return stubResolver{values: map[string]string{"RESOLVED": "value"}}
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, prep.composeFiles)
+	assert.Equal(t, filepath.Join(root, "docker-compose.lake.yml"), prep.composeFiles[0])
+}
+
 // assertComposeFiles checks the generated override is listed in composeFiles iff
 // it was expected to be written.
 func assertComposeFiles(t *testing.T, composeFiles []string, override string, want bool) {

@@ -34,10 +34,11 @@ func RegisterConfigResolver(rc ConfigResolverCommand) {
 func init() {
 	RegisterConfigResolver(ConfigResolverCommand{
 		Name:  "docker-compose",
-		Short: "Read non-secret config from docker-compose.yml",
-		Setup: func(_ *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+		Short: "Read non-secret config from a docker compose file",
+		Setup: func(fs *pflag.FlagSet) func(root string) (ConfigResolver, error) {
+			file := fs.String("compose-file", "docker-compose.yml", "docker compose file to read non-secret config from, relative to --root")
 			return func(root string) (ConfigResolver, error) {
-				return &dockerComposeConfig{composeFile: filepath.Join(root, "docker-compose.yml")}, nil
+				return &dockerComposeConfig{composeFile: filepath.Join(root, *file)}, nil
 			}
 		},
 	})
