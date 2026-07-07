@@ -1,19 +1,21 @@
-package cli
+package aws
 
 import (
 	"context"
 	"fmt"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+
+	"github.com/harrisoncramer/ultra/cli"
 
 	"github.com/spf13/pflag"
 )
 
 func init() {
-	RegisterSecretResolver(SecretResolverCommand{
+	cli.RegisterSecretResolver(cli.SecretResolverCommand{
 		Name:  "aws-secret-manager",
 		Short: "Resolve secrets from AWS Secrets Manager via the AWS SDK",
 		Long: "aws-secret-manager reads each app's secrets from AWS Secrets Manager, one\n" +
@@ -29,12 +31,12 @@ func init() {
 			"roles work by pointing --profile at the right profile. Pass --profile to pin\n" +
 			"a named profile instead of relying on the default; --region sets the region\n" +
 			"when it isn't already configured for that profile.",
-		Setup: func(fs *pflag.FlagSet) func(app string) SecretResolver {
+		Setup: func(fs *pflag.FlagSet) func(app string) cli.SecretResolver {
 			var region, prefix, profile string
 			fs.StringVar(&region, "region", "", "AWS region (defaults to the SDK's configured region)")
 			fs.StringVar(&prefix, "prefix", "", "path segment prepended before the app, e.g. an environment name")
 			fs.StringVar(&profile, "profile", "", "named AWS profile to use (defaults to the SDK's credential chain)")
-			return func(app string) SecretResolver {
+			return func(app string) cli.SecretResolver {
 				return awsSecretsManager{app: app, prefix: prefix, region: region, profile: profile}
 			}
 		},
@@ -112,8 +114,8 @@ func (a awsSecretsManager) Resolve(ctx context.Context, names []string) (map[str
 			return nil, fmt.Errorf("aws secretsmanager batch-get-secret-value: %w", err)
 		}
 		for _, sv := range resp.SecretValues {
-			if name, ok := idToName[aws.ToString(sv.Name)]; ok && aws.ToString(sv.SecretString) != "" {
-				out[name] = aws.ToString(sv.SecretString)
+			if name, ok := idToName[awssdk.ToString(sv.Name)]; ok && awssdk.ToString(sv.SecretString) != "" {
+				out[name] = awssdk.ToString(sv.SecretString)
 			}
 		}
 	}

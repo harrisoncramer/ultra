@@ -1,4 +1,4 @@
-package cli
+package vault
 
 import (
 	"encoding/pem"
