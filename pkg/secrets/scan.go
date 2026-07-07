@@ -9,12 +9,81 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// SecretNames type-checks the Go package at dir and returns the env-var names of
-// every field tagged `secret:"true"` reachable from its exported Config struct.
-// It follows embedded and nested struct fields wherever they're
-// defined, including sub-structs in other packages. It fails if the package has
-// no exported Config struct.
+// Field is one env-var field reachable from a Config struct.
+type Field struct {
+	Name     string // env-var name (the part before the first comma of the env tag)
+	Required bool   // the env tag carries `required` or `notEmpty` — the value must be set
+	Secret   bool   // the field is tagged secret:"true"
+}
+
+// Fields type-checks the Go package at dir and returns every env-var field
+// reachable from its exported Config struct, recording whether each is required
+// and secret-tagged. It follows embedded and nested struct fields wherever
+// they're defined, including sub-structs in other packages, and deduplicates by
+// env-var name. It fails if the package has no exported Config struct.
+func Fields(dir string) ([]Field, error) {
+	st, err := configStruct(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var fields []Field
+	seen := map[string]struct{}{}
+	visited := map[*types.Struct]bool{}
+
+	var visit func(s *types.Struct)
+	visit = func(s *types.Struct) {
+		if visited[s] {
+			return
+		}
+		visited[s] = true
+		for i := 0; i < s.NumFields(); i++ {
+			// Recurse into struct-typed fields (embedded or named), mirroring how
+			// env.Parse descends into them. Type info resolves them uniformly, so
+			// a sub-struct from another package is followed just like a local one.
+			if child := structUnder(s.Field(i).Type()); child != nil {
+				visit(child)
+			}
+			tag := reflect.StructTag(s.Tag(i))
+			name, opts, _ := strings.Cut(tag.Get("env"), ",") // "NAME,required" -> "NAME", "required"
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			fields = append(fields, Field{
+				Name:     name,
+				Required: hasOption(opts, "required") || hasOption(opts, "notEmpty"),
+				Secret:   tag.Get("secret") == "true",
+			})
+		}
+	}
+	visit(st)
+
+	return fields, nil
+}
+
+// SecretNames returns the env-var names of every field tagged `secret:"true"`
+// reachable from the exported Config struct at dir.
 func SecretNames(dir string) ([]string, error) {
+	fields, err := Fields(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, f := range fields {
+		if f.Secret {
+			names = append(names, f.Name)
+		}
+	}
+	return names, nil
+}
+
+// configStruct type-checks the Go package at dir and returns the underlying
+// struct of its exported Config, failing if the package has no such struct.
+func configStruct(dir string) (*types.Struct, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
 		Dir:  dir,
@@ -39,42 +108,17 @@ func SecretNames(dir string) ([]string, error) {
 	if st == nil {
 		return nil, fmt.Errorf("config in %s is not a struct", dir)
 	}
+	return st, nil
+}
 
-	var names []string
-	seen := map[string]struct{}{}
-	visited := map[*types.Struct]bool{}
-
-	var visit func(s *types.Struct)
-	visit = func(s *types.Struct) {
-		if visited[s] {
-			return
-		}
-		visited[s] = true
-		for i := 0; i < s.NumFields(); i++ {
-			// Recurse into struct-typed fields (embedded or named), mirroring how
-			// env.Parse descends into them. Type info resolves them uniformly, so
-			// a sub-struct from another package is followed just like a local one.
-			if child := structUnder(s.Field(i).Type()); child != nil {
-				visit(child)
-			}
-			tag := reflect.StructTag(s.Tag(i))
-			if tag.Get("secret") != "true" {
-				continue
-			}
-			name, _, _ := strings.Cut(tag.Get("env"), ",") // "NAME,required" -> "NAME"
-			if name == "" {
-				continue
-			}
-			if _, dup := seen[name]; dup {
-				continue
-			}
-			seen[name] = struct{}{}
-			names = append(names, name)
+// hasOption reports whether the comma-separated env-tag options contain want.
+func hasOption(opts, want string) bool {
+	for _, o := range strings.Split(opts, ",") {
+		if strings.TrimSpace(o) == want {
+			return true
 		}
 	}
-	visit(st)
-
-	return names, nil
+	return false
 }
 
 // ConfigImportPath returns the import path of the Go package at dir, so a generated program can import it and call its Load.

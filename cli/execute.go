@@ -36,6 +36,7 @@ func newRootCmd(fc fileConfig) *cobra.Command {
 	}
 	root.AddCommand(newRunCmd(fc))
 	root.AddCommand(newValidateCmd(fc))
+	root.AddCommand(newLintCmd(fc))
 	return root
 }
 
@@ -124,6 +125,58 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		return validate(cmd.Context(), validateParams{
+			root:           shared.root,
+			apps:           apps,
+			configDir:      shared.configDir,
+			secretResolver: resolverFor,
+			configResolver: cr,
+		})
+	}
+	return cmd
+}
+
+func newLintCmd(fc fileConfig) *cobra.Command {
+	shared := &sharedFlags{}
+	var secretResolver, configResolver string
+
+	cmd := &cobra.Command{
+		Use:   "lint [app-path...] --secret-resolver <name> [flags]",
+		Short: "Statically check each app has no required key its resolvers won't provide",
+		Long: "lint checks that every required config key an app declares is provided —\n" +
+			"secrets by --secret-resolver, non-secret config by --config-resolver — by\n" +
+			"comparing the declared keys against the keys those resolvers offer. Unlike\n" +
+			"validate it never parses values or runs the app's config, so it works where\n" +
+			"the real secret values aren't reachable, such as CI with a resolver that\n" +
+			"reads declared keys from deployment manifests. Apps are the directories\n" +
+			"given as arguments, or those in .ultra.toml when none are given. It reports\n" +
+			"each app and exits non-zero if any required key is unprovided.",
+		Args: cobra.ArbitraryArgs,
+	}
+	addSharedFlags(cmd, shared)
+	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
+	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
+	resolverFor := bindSelectedSecretResolver(cmd, fc)
+	configResolverFor := bindSelectedConfigResolver(cmd, fc)
+
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := applyConfigDefaults(cmd, fc); err != nil {
+			return err
+		}
+		if resolverFor == nil {
+			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
+		}
+		if configResolverFor == nil {
+			return fmt.Errorf("--config-resolver must be one of: %s", configResolverNames())
+		}
+		apps := resolveApps(args, fc)
+		if len(apps) == 0 {
+			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
+		}
+		cr, err := configResolverFor(shared.root)
+		if err != nil {
+			return err
+		}
+		return lint(cmd.Context(), lintParams{
 			root:           shared.root,
 			apps:           apps,
 			configDir:      shared.configDir,

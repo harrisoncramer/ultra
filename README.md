@@ -213,6 +213,18 @@ Ultra supports validating a configuration prior to starting a container. This is
 ultra validate apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
 ```
 
+### Linting configuration
+
+`ultra validate` needs the real values: it reconstructs the boot environment and parses it, so it must run somewhere the secret store is reachable. That rules out most CI, where a job deliberately has no access to an app's secrets.
+
+`ultra lint` is the check for that case. It takes the same resolvers as `validate` but never constructs or parses a value. It only compares the keys each app's `Config` requires against the keys its resolvers offer, and fails if a required key is unprovided. Because it never reads a value, it can run against a resolver that reports declared keys from deployment manifests rather than from the store, so no secret access is needed.
+
+```bash
+ultra lint apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
+```
+
+Use `lint` to catch config drift early — a required field added in code but missing from the platform's config or secret declarations — and `validate` where the real values are available, such as local development or an in-cluster job.
+
 ### Config resolvers
 
 The `--config-resolver` is only ever used by the `ultra validate` command. The resolver just tells `validate` where the non-secret values live, so it can rebuild the boot environment. Pick one with `--config-resolver` (default `docker-compose`):
