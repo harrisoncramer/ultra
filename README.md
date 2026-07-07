@@ -77,15 +77,18 @@ go install github.com/harrisoncramer/ultra/cmd/ultra@latest
 ```go
 package config
 
-import "github.com/harrisoncramer/ultra"
-
 type Config struct {
 	DatabaseURL string `env:"DATABASE_URL,required,notEmpty" secret:"true"`
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info"`
 }
+```
 
-func Load() (Config, error) {
-    return ultra.Load[Config]()
+Load it once at startup with `ultra.Load`, passing a pointer to your config; it parses the environment into it and hands it back:
+
+```go
+cfg, err := ultra.Load(&config.Config{})
+if err != nil {
+    log.Fatal(err)
 }
 ```
 
@@ -128,8 +131,6 @@ Here's what a more complex configuration with Ultra might look like:
 ```go
 package config
 
-import "github.com/harrisoncramer/ultra"
-
 type GoogleConfig struct {
 	ClientID     string `env:"GOOGLE_CLIENT_ID,required,notEmpty" secret:"true"`
 	ClientSecret string `env:"GOOGLE_CLIENT_SECRET,required,notEmpty" secret:"true"`
@@ -145,17 +146,12 @@ type Config struct {
 	Database DatabaseConfig
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"` // Values w/out "secret" are config values
 }
-
-// Load reads the worker configuration from the environment.
-func Load() (Config, error) {
-	return ultra.Load[Config]()
-}
 ```
 
-Call `Load()` once at the start of your application:
+Call `ultra.Load` once at the start of your application, passing a pointer to your config:
 
 ```go
-cfg, err := config.Load()
+cfg, err := ultra.Load(&config.Config{})
 if err != nil {
 	log.Fatal(err)
 }

@@ -42,7 +42,7 @@ func TestLoadFailsOnMissingRequiredSecret(t *testing.T) {
 	type cfg struct {
 		Token string `env:"REQUIRED_SECRET_TOKEN,required,notEmpty" secret:"true"`
 	}
-	if _, err := Load[cfg](); err == nil {
+	if _, err := Load(&cfg{}); err == nil {
 		t.Fatal("expected an error when a required secret is unset")
 	}
 }
@@ -51,7 +51,7 @@ func TestLoadAllowsMissingOptionalSecret(t *testing.T) {
 	type cfg struct {
 		Token string `env:"OPTIONAL_SECRET_TOKEN" secret:"true"`
 	}
-	if _, err := Load[cfg](); err != nil {
+	if _, err := Load(&cfg{}); err != nil {
 		t.Fatalf("optional secret unset should not fail: %v", err)
 	}
 }

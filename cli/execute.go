@@ -90,11 +90,11 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "validate [app-path...] --secret-resolver <name> [flags]",
-		Short: "Resolve the given apps' secrets and config and validate each app's Load",
+		Short: "Resolve the given apps' secrets and config and validate each app's Config",
 		Long: "validate resolves secrets the same way as run (--secret-resolver), but rather\n" +
 			"than starting containers it reconstructs the environment each app would boot\n" +
 			"with — its non-secret config from --config-resolver (docker-compose by default)\n" +
-			"plus its resolved secrets — and checks that the app's config.Load succeeds.\n" +
+			"plus its resolved secrets — and checks that ultra.Load parses the app's Config.\n" +
 			"Apps are the directories given as arguments, or those listed in .ultra.toml\n" +
 			"when none are given. It reports each app and exits non-zero if any fail.",
 		Args: cobra.ArbitraryArgs,

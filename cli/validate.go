@@ -23,8 +23,9 @@ type validateParams struct {
 
 // validate reconstructs the environment each app would boot with — its
 // non-secret config from the config resolver plus its secrets from the secret
-// resolver — and runs the app's own config.Load against it, so caarlos0/env does
-// the checking. It reports each app and exits non-zero if any fail.
+// resolver — and loads the app's Config with ultra.Load against it, so
+// caarlos0/env does the checking. It reports each app and exits non-zero if any
+// fail.
 func validate(ctx context.Context, p validateParams) error {
 	failed := 0
 	for _, appPath := range p.apps {
@@ -101,8 +102,8 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	return nil
 }
 
-// redactSecrets replaces any secret value appearing in s with [redacted], so a
-// config.Load error that echoes a malformed value (e.g. a non-numeric int) can't
+// redactSecrets replaces any secret value appearing in s with [redacted], so an
+// ultra.Load error that echoes a malformed value (e.g. a non-numeric int) can't
 // leak it to the console. Values are masked longest-first so one value contained
 // in another is still fully replaced.
 func redactSecrets(s string, secretVals map[string]string) string {
@@ -130,10 +131,11 @@ import (
 	"os"
 
 	config %q
+	"github.com/harrisoncramer/ultra"
 )
 
 func main() {
-	if _, err := config.Load(); err != nil {
+	if _, err := ultra.Load(&config.Config{}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
