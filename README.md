@@ -328,6 +328,28 @@ vault = "Engineering"             # 1password's own flag
 
 Naming apps on the command line overrides the file's `apps` list, so you can still target one at a time: `ultra validate apps/worker`.
 
+### Override resolvers
+
+Sometimes you need a value to win over whatever the normal backend returns. The common case is local development: a developer points a secret at a local instance, or supplies their own token, without touching committed config. ultra handles this with an override layer, and the override is just another resolver — any registered secret or config resolver can serve as one.
+
+Declare it in the config file with a `[secrets-override]` or `[config-override]` section. Its resolver runs after the base resolver, and its values win for any name both provide. Because an override reuses a real resolver, it is per-app the same way base resolvers are: a personal 1Password vault, for instance, is looked up per app, so each app can override different values.
+
+```toml
+[secrets]
+resolver = "aws-secret-manager"   # the team's real store
+
+[secrets.aws-secret-manager]
+region = "us-east-1"
+
+[secrets-override]
+resolver = "1password"            # my personal vault wins locally
+
+[secrets-override.1password]
+vault = "LocalDev"
+```
+
+The precedence is base first, then override. For secrets that means the launcher env, then the override on top; for config the base config resolver, then the override. The override resolver's own flags live only in its config-file sub-table, never on the command line, so pointing the override at the same provider as the base (a second vault, a different account) never collides with the base resolver's flags.
+
 ### Writing a custom secret resolver
 
 You don't fork ultra to add a backend. Import `github.com/harrisoncramer/ultra/cli`, register a secret resolver, and call `cli.Execute` from your own `main` function.

@@ -12,6 +12,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/pflag"
 )
@@ -52,4 +53,74 @@ var secretResolvers []SecretResolverCommand
 // resolvers register themselves; call this before Execute to add your own.
 func RegisterSecretResolver(rc SecretResolverCommand) {
 	secretResolvers = append(secretResolvers, rc)
+}
+
+// layeredSecretResolver queries base then layers override on top, so an override
+// value wins over the base for the same name. A nil override is a no-op.
+type layeredSecretResolver struct {
+	base     SecretResolver
+	override SecretResolver
+}
+
+func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map[string]string, error) {
+	out, err := l.base.Resolve(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+	if l.override == nil {
+		return out, nil
+	}
+	ov, err := l.override.Resolve(ctx, names)
+	if err != nil {
+		return nil, fmt.Errorf("secret override resolver: %w", err)
+	}
+	if out == nil {
+		out = make(map[string]string, len(ov))
+	}
+	for k, v := range ov {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// layerSecretResolver wraps base so the override's values win, or returns base
+// unchanged when no override is configured.
+func layerSecretResolver(base, override func(app string) SecretResolver) func(app string) SecretResolver {
+	if override == nil {
+		return base
+	}
+	return func(app string) SecretResolver {
+		return layeredSecretResolver{base: base(app), override: override(app)}
+	}
+}
+
+// buildSecretOverride returns the override secret resolver factory named by the
+// [secrets-override] section, or nil when none is configured. Its flags come only
+// from the file, bound on a private flag set so they never collide with the base
+// resolver's flags on the command line.
+func buildSecretOverride(fc fileConfig) func(app string) SecretResolver {
+	name := fc.override.secretResolver
+	if name == "" {
+		return nil
+	}
+	for _, rc := range secretResolvers {
+		if rc.Name != name {
+			continue
+		}
+		fs := pflag.NewFlagSet("secret-override", pflag.ContinueOnError)
+		factory := rc.Setup(fs)
+		applyFlagSet(fs, fc.override.secretFlags)
+		return factory
+	}
+	return nil
+}
+
+// applyFlagSet sets every flag on fs whose name has a value in vals, used to feed
+// an override resolver its flags from the config file.
+func applyFlagSet(fs *pflag.FlagSet, vals map[string]string) {
+	fs.VisitAll(func(f *pflag.Flag) {
+		if v, ok := vals[f.Name]; ok {
+			_ = f.Value.Set(v)
+		}
+	})
 }
