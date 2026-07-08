@@ -46,8 +46,6 @@ ultra validate apps/worker --secret-resolver 1password --vault Engineering      
 ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # regenerates the override, injects DATABASE_URL, starts the container
 ```
 
-`gen` is a separate step only when you want the override file without the store, for CI or to commit it. `run` regenerates it itself, so for the plain local loop you can skip straight to it.
-
 4. Optional: add an `.ultra.toml` at the repo root, naming your apps and secret store, so you can drop the flags:
 
 ```toml
@@ -102,9 +100,9 @@ Second, the secrets often leak to disk. An `.env` file may hold plaintext creden
 
 Lastly, nothing is validated until the container boots. Missing or malformed values can slip through development processes, and surface as runtime crash rather than an error at boot.
 
-Ultra removes the duplication and the disk. Your typed config is the single source of truth, and fields tagged `secret:"true"` are the secrets:
+Ultra removes the duplication and the disk. Your typed config is the single source of truth, and fields tagged `secret:"true"` are the secrets.
 
-Instead, define your configuration as normal Go structs and annotate each field with where its value comes from: an environment variable, a secret provider, and so on. During development and in CI, Ultra resolves those values from providers like 1Password or AWS Secrets Manager and validates the result against the same struct, including its validation tags, so missing or malformed configuration fails before your application ever starts.
+Define your configuration as normal Go structs and annotate each field with where its value comes from: an environment variable, a secret provider, and so on. During development and in CI, Ultra resolves those values from providers like 1Password or AWS Secrets Manager and validates the result against the same struct, including its validation tags, so missing or malformed configuration fails before your application ever starts.
 
 ```go
 type Config struct {
@@ -125,9 +123,7 @@ services:
       LOG_LEVEL: info
 ```
 
-And `ultra validate` checks every app's config against the full environment it would boot with, so a missing secret or an unparseable value fails fast instead of at container start. At runtime your app keeps loading configuration however it already does, whether that's plain environment variables or another loader. Validation, resolution, and runtime injection stay separate concerns, which is what makes Ultra complement tools like Docker Compose, Kubernetes Secrets, and env loaders rather than replace them.
-
-Configuration is a contract. Your app likely already has an implicit config schema, spread across its structs, `os.Getenv` calls, and deployment files. Ultra makes that schema explicit. The `ultra validate` command resolves every dependency and checks every field against the struct, so it is closer to schema validation than to loading. Ultra does not replace runtime loading in production. Keep `os.Getenv`, caarlos0/env, koanf, or Kubernetes Secrets; Ultra is a development-time verification layer on top, so nothing at runtime has to change to adopt it.
+Ultra is also capable via `ultra validate` of checking whether every app's config is valid against the full environment it would boot with, so a missing secret or an unparseable value fails fast instead of at container start. Configuration is a contract. Your app likely already has an implicit config schema, spread across its structs, `os.Getenv` calls, and deployment files. Ultra makes that schema explicit. The `ultra validate` command resolves every dependency and checks every field against the struct, so it is closer to schema validation than to loading. Ultra does not replace runtime loading in production. Keep `os.Getenv`, caarlos0/env, koanf, or Kubernetes Secrets; Ultra is a development-time verification layer on top, so nothing at runtime has to change to adopt it.
 
 Ultra is deliberately narrow. It does not try to be Kubernetes, Terraform, or your cloud platform, and it does not want to generate your production infrastructure. Those systems own networking, IAM, secret rotation, provisioning, and deployment strategy, and they are good at it.
 
