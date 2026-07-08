@@ -20,9 +20,16 @@ type redisStore struct {
 // startRedisStore launches a Redis container with a published port and waits
 // until it accepts connections on the host, the same path the resolver uses.
 func startRedisStore() (*redisStore, error) {
-	out, err := exec.Command("docker", "run", "-d", "--rm", "-p", "6379", "redis:7-alpine").CombinedOutput()
+	// Pull first so `docker run` doesn't emit pull progress that would otherwise
+	// need to be untangled from the container id.
+	if out, err := exec.Command("docker", "pull", "-q", "redis:7-alpine").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("docker pull redis: %w: %s", err, out)
+	}
+	// Read stdout only: the container id is on stdout, any stderr noise stays out
+	// of it.
+	out, err := exec.Command("docker", "run", "-d", "--rm", "-p", "6379", "redis:7-alpine").Output()
 	if err != nil {
-		return nil, fmt.Errorf("docker run redis: %w: %s", err, out)
+		return nil, fmt.Errorf("docker run redis: %w", err)
 	}
 	cid := strings.TrimSpace(string(out))
 	s := &redisStore{cid: cid}
