@@ -159,7 +159,7 @@ if err != nil {
 fmt.Println("The Google Client ID is: %s", cfg.Google.ClientID)
 ```
 
-With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container automatically by building a dynamic set of key/value pairs for each Docker container. Only the secrets the store actually returns are forwarded; a secret the store doesn't hold is left untouched, so a value the platform already provides — the compose `environment:` block, for instance — is used as-is rather than overridden with an empty one. 
+With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container by generating, per app, a compose override that maps every secret the app's `Config` declares onto an app-namespaced launcher variable, then setting those variables at launch for the secrets the store returns. The override lists names only, never values, so it is safe to commit. A secret the store doesn't hold has no launcher variable set, so its override entry interpolates to empty; secrets are expected to come from the store, and a missing one is surfaced by `ultra validate` and `ultra lint`. 
 
 The docker compose for the above configuration does not need to re-enumerate the secrets stored in the existing `Config` value. This is sufficient: 
 
@@ -239,6 +239,16 @@ ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker comp
 ultra run apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1 -- docker compose up
 ultra run apps/worker --secret-resolver vault --mount secret -- docker compose up
 ```
+
+### Generating overrides
+
+The compose override files are references only: they map each declared secret name onto its launcher variable and never contain a value. Generating them is a static operation over each app's `Config` and needs no secret store, so `ultra run` regenerates them on every launch. To produce them without launching — in CI, a setup step, or to commit them into version control — use `ultra gen`:
+
+```bash
+ultra gen apps/server apps/worker --override-dir compose/overrides
+```
+
+Because `gen` never contacts the store, it works offline, the same property that makes `lint` useful. Point `--override-dir` at a committed path to keep the files in version control; `run` writes to and reads from the same path. The override lists every secret the app declares, so it stays correct as long as the `Config` does, regardless of what the store currently holds.
 
 ### Validating configuration
 

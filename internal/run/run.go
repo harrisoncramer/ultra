@@ -1,6 +1,6 @@
-// Package run is the run domain: it resolves each app's secrets, writes the
-// names-only compose overrides that forward them, and execs a command with the
-// launcher environment and COMPOSE_FILE set.
+// Package run is the run domain: it generates each app's names-only compose
+// override, resolves each app's secrets, and execs a command with the launcher
+// environment and COMPOSE_FILE set.
 package run
 
 import (
@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 
@@ -23,50 +23,44 @@ import (
 // simultaneously.
 const maxConcurrentApps = 8
 
-// scanner reports the secret env-var names an app's Config declares.
-type scanner interface {
-	SecretNames(dir string) ([]string, error)
+// generator writes each app's compose override and reports the secret names it
+// declares, independent of the secret store.
+type generator interface {
+	Generate(apps []string) ([]gen.AppOverride, error)
 }
 
-// composer renders the compose override and the namespaced launcher variables.
+// composer renders the namespaced launcher variable a secret is passed through.
 type composer interface {
 	Var(app, name string) string
-	Override(app string, names []string) string
 }
 
-// Runner resolves apps' secrets and launches commands against them.
+// Runner generates apps' overrides, resolves their secrets, and launches
+// commands against them.
 type Runner struct {
-	scanner     scanner
+	generator   generator
 	composer    composer
 	project     project.Project
-	overrideDir string
 	composeFile string
 }
 
 // NewRunnerParams are the dependencies and layout NewRunner needs.
 type NewRunnerParams struct {
-	Scanner     scanner
+	Generator   generator
 	Composer    composer
 	Project     project.Project
-	OverrideDir string // dir under root the overrides are written to; empty means "tmp"
 	ComposeFile string // base compose file COMPOSE_FILE points at; empty means "docker-compose.yml"
 }
 
-// NewRunner builds a Runner, defaulting the override dir and compose file.
+// NewRunner builds a Runner, defaulting the compose file.
 func NewRunner(params NewRunnerParams) *Runner {
-	overrideDir := params.OverrideDir
-	if overrideDir == "" {
-		overrideDir = "tmp"
-	}
 	composeFile := params.ComposeFile
 	if composeFile == "" {
 		composeFile = "docker-compose.yml"
 	}
 	return &Runner{
-		scanner:     params.Scanner,
+		generator:   params.Generator,
 		composer:    params.Composer,
 		project:     params.Project,
-		overrideDir: overrideDir,
 		composeFile: composeFile,
 	}
 }
@@ -86,69 +80,53 @@ type Params struct {
 	Command     []string
 }
 
-// prepare discovers every app, resolves its secrets via ResolverFor, writes the
-// names-only compose override that forwards them, and returns the launcher env
-// (os environment plus app-namespaced secrets) and the compose file list with
-// COMPOSE_FILE already appended to env. A store-level failure is fatal; a missing
-// individual secret is not. No secret is written to disk.
+// prepare generates every app's compose override, resolves each app's secrets
+// via ResolverFor, and returns the launcher env (os environment plus
+// app-namespaced secrets) and the compose file list with COMPOSE_FILE already
+// appended to env. A store-level failure is fatal; a missing individual secret
+// is not. No secret is written to disk.
 func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) {
+	// The overrides are static (they list the declared secret names, not values),
+	// so generate them up front without the store; run only resolves and injects.
+	overrides, err := r.generator.Generate(params.Apps)
+	if err != nil {
+		return nil, err
+	}
+
 	// Each app's secret store round-trip is independent, so fire them all off
 	// concurrently and let the errgroup cancel the rest on the first store-level
-	// failure. Results land in per-app slots so the merged env and compose file
-	// list stay in the apps' input order.
+	// failure. Results land in per-app slots so the merged env stays in the apps'
+	// input order.
 	type appResult struct {
-		envVars     []string
-		composeFile string
-		log         string
+		envVars []string
+		log     string
 	}
-	results := make([]appResult, len(params.Apps))
+	results := make([]appResult, len(overrides))
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxConcurrentApps)
-	for i, appPath := range params.Apps {
+	for i, o := range overrides {
+		if len(o.Names) == 0 {
+			continue
+		}
 		g.Go(func() error {
-			app := r.project.AppName(appPath)
-			names, err := r.scanner.SecretNames(r.project.AppConfigDir(appPath))
-			if err != nil {
-				return fmt.Errorf("reading %s config: %w", app, err)
-			}
-			if len(names) == 0 {
-				return nil
-			}
-
-			values, err := params.ResolverFor(app).Resolve(ctx, names)
+			values, err := params.ResolverFor(o.App).Resolve(ctx, o.Names)
 			if err != nil {
 				return err
 			}
 			// Forward only the secrets the resolver actually returned, and namespace
 			// each so two apps sharing a name (e.g. DATABASE_URL) don't collide in this
 			// shared env; the override maps it back per service. A name the store lacks
-			// is left out of the override entirely, so the value the platform already
-			// provides (e.g. the compose environment) survives instead of being
-			// overridden with an empty one.
-			resolved := make([]string, 0, len(values))
+			// is left unset, so its override entry interpolates to empty rather than
+			// carrying another app's value.
 			envVars := make([]string, 0, len(values))
 			for name, val := range values {
-				resolved = append(resolved, name)
-				envVars = append(envVars, r.composer.Var(app, name)+"="+val)
+				envVars = append(envVars, r.composer.Var(o.App, name)+"="+val)
 			}
-			sort.Strings(resolved)
-
-			res := appResult{
+			results[i] = appResult{
 				envVars: envVars,
-				log:     fmt.Sprintf("ultra: resolved %d/%d secrets for %s\n", len(values), len(names), app),
+				log:     fmt.Sprintf("ultra: resolved %d/%d secrets for %s\n", len(values), len(o.Names), o.App),
 			}
-			if len(resolved) > 0 {
-				override := filepath.Join(r.project.Root, r.overrideDir, app+".compose.yml")
-				if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
-					return fmt.Errorf("creating override dir for %s: %w", app, err)
-				}
-				if err := os.WriteFile(override, []byte(r.composer.Override(app, resolved)), 0o644); err != nil {
-					return fmt.Errorf("writing compose override for %s: %w", app, err)
-				}
-				res.composeFile = override
-			}
-			results[i] = res
 			return nil
 		})
 	}
@@ -158,13 +136,13 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
-	for _, res := range results {
-		env = append(env, res.envVars...)
-		if res.composeFile != "" {
-			composeFiles = append(composeFiles, res.composeFile)
+	for i, o := range overrides {
+		env = append(env, results[i].envVars...)
+		if o.Path != "" {
+			composeFiles = append(composeFiles, o.Path)
 		}
-		if res.log != "" {
-			fmt.Fprint(os.Stderr, res.log)
+		if results[i].log != "" {
+			fmt.Fprint(os.Stderr, results[i].log)
 		}
 	}
 

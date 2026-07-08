@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/harrisoncramer/ultra/internal/compose"
+	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/lint"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
@@ -52,10 +53,56 @@ func newRootCmd(fc fileConfig) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
+	root.AddCommand(newGenCmd(fc))
 	root.AddCommand(newRunCmd(fc))
 	root.AddCommand(newValidateCmd(fc))
 	root.AddCommand(newLintCmd(fc))
 	return root
+}
+
+func newGenCmd(fc fileConfig) *cobra.Command {
+	shared := &sharedFlags{}
+
+	cmd := &cobra.Command{
+		Use:   "gen [app-path...] [flags]",
+		Short: "Generate the given apps' compose override files without resolving secrets",
+		Long: "gen writes each app's names-only docker compose override — the file that maps\n" +
+			"every secret the app's Config declares onto its namespaced launcher variable —\n" +
+			"into --override-dir. It reads only the app's config package and never contacts\n" +
+			"the secret store, so it works offline and its output can be committed and\n" +
+			"reused by run. Apps are the directories given as arguments, or those listed in\n" +
+			".ultra.toml when none are given.",
+		Args: cobra.ArbitraryArgs,
+	}
+	addSharedFlags(cmd, shared)
+
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := applyConfigDefaults(cmd, fc); err != nil {
+			return err
+		}
+		apps := resolveApps(args, fc)
+		if len(apps) == 0 {
+			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
+		}
+		overrides, err := gen.NewGenerator(gen.NewGeneratorParams{
+			Scanner:     scan.NewScanner(),
+			Composer:    compose.NewComposer(),
+			Project:     shared.project(),
+			OverrideDir: shared.overrideDir,
+		}).Generate(apps)
+		if err != nil {
+			return err
+		}
+		for _, o := range overrides {
+			if o.Path == "" {
+				fmt.Fprintf(os.Stderr, "ultra: %s declares no secrets, no override written\n", o.App)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "ultra: wrote %s (%d secrets)\n", o.Path, len(o.Names))
+		}
+		return nil
+	}
+	return cmd
 }
 
 func newRunCmd(fc fileConfig) *cobra.Command {
@@ -94,10 +141,14 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			return fmt.Errorf("no apps given: pass app paths before -- or set apps in .ultra.toml")
 		}
 		runner := run.NewRunner(run.NewRunnerParams{
-			Scanner:     scan.NewScanner(),
+			Generator: gen.NewGenerator(gen.NewGeneratorParams{
+				Scanner:     scan.NewScanner(),
+				Composer:    compose.NewComposer(),
+				Project:     shared.project(),
+				OverrideDir: shared.overrideDir,
+			}),
 			Composer:    compose.NewComposer(),
 			Project:     shared.project(),
-			OverrideDir: shared.overrideDir,
 			ComposeFile: composeFile,
 		})
 		return runner.Run(cmd.Context(), run.Params{
