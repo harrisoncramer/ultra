@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Runs the docker-backed integration test suite"
+
+go test -tags integration -count=1 ./test/integration/... --timeout 10m

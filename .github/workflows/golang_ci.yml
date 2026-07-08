@@ -82,3 +82,25 @@ jobs:
             golangci-${{ runner.os }}-
 
       - run: mise run lint
+
+  integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Mise
+        uses: ./.github/actions/use-mise
+
+      - name: Use Caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - run: mise run integration

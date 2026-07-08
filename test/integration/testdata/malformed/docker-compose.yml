@@ -1,0 +1,6 @@
+services:
+  app:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+    command: ["sh", "-c", "true"]
