@@ -29,7 +29,11 @@ func Load[T any](cfg *T, opts ...Option) (*T, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	if missing := missingRequired(cfg, o.environment); len(missing) > 0 {
-		return nil, fmt.Errorf("failed to load config: %s required but not set for environment %q", strings.Join(missing, ", "), o.environment)
+		scope := ""
+		if o.environment != "" {
+			scope = fmt.Sprintf(" for environment %q", o.environment)
+		}
+		return nil, fmt.Errorf("failed to load config: %s required but not set%s", strings.Join(missing, ", "), scope)
 	}
 	return cfg, nil
 }
