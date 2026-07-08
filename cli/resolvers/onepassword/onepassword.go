@@ -7,11 +7,18 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/harrisoncramer/ultra/cli"
 
 	"github.com/spf13/pflag"
 )
+
+// opMu serializes `op` invocations. Callers resolve apps concurrently, but the op
+// CLI unlocks via a biometric prompt per invocation until its desktop-app session
+// is cached; firing many at once triggers a prompt storm. Running them one at a
+// time lets the first prompt cache the session so the rest reuse it silently.
+var opMu sync.Mutex
 
 func init() {
 	cli.RegisterSecretResolver(cli.SecretResolverCommand{
@@ -57,7 +64,10 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	opMu.Lock()
+	err := cmd.Run()
+	opMu.Unlock()
+	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
