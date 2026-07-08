@@ -40,7 +40,7 @@ func TestIntegration(t *testing.T) {
 func (r *Rig) genListsAllDeclaredSecrets(t *testing.T) {
 	// gen needs neither docker nor the store: it is a static scan of the config.
 	f := r.openFixture(t, "single-app")
-	res := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--override-dir", "genout")
+	res := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--output-dir", "genout")
 	if !res.ok() {
 		t.Fatalf("gen failed:\n%s", res.output)
 	}
@@ -328,7 +328,7 @@ func (r *Rig) genHonorsConfigDir(t *testing.T) {
 	// gen is a static scan, so this needs neither docker nor the store.
 	f := r.openFixture(t, "custom-config-dir")
 
-	ok := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--config-dir", "pkg/config", "--override-dir", "out")
+	ok := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--config-dir", "pkg/config", "--output-dir", "out")
 	if !ok.ok() {
 		t.Fatalf("gen should find the config under pkg/config:\n%s", ok.output)
 	}
@@ -336,7 +336,7 @@ func (r *Rig) genHonorsConfigDir(t *testing.T) {
 
 	// The default config dir is "config", which this fixture doesn't have, so
 	// gen must fail without the flag.
-	if bad := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--override-dir", "out2"); bad.ok() {
+	if bad := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--output-dir", "out2"); bad.ok() {
 		t.Errorf("gen should fail when the config dir is wrong:\n%s", bad.output)
 	}
 }
@@ -345,18 +345,18 @@ func (r *Rig) configFilePrecedence(t *testing.T) {
 	// gen is a static scan, so this needs neither docker nor the store.
 	f := r.openFixture(t, "config-file")
 
-	// No app args and no --override-dir: both come from .ultra.toml.
+	// No app args and no --output-dir: both come from .ultra.toml.
 	if res := r.ultra(t, "gen", "--root", f.root); !res.ok() {
-		t.Fatalf("gen should use apps and override-dir from .ultra.toml:\n%s", res.output)
+		t.Fatalf("gen should use apps and output-dir from .ultra.toml:\n%s", res.output)
 	}
 	assertFileContains(t, filepath.Join(f.root, "from-file", overrideName), "IT_API_KEY:")
 
-	// A command-line --override-dir wins over the file's value.
-	if res := r.ultra(t, "gen", "--root", f.root, "--override-dir", "from-cli"); !res.ok() {
-		t.Fatalf("gen with a command-line override-dir failed:\n%s", res.output)
+	// A command-line --output-dir wins over the file's value.
+	if res := r.ultra(t, "gen", "--root", f.root, "--output-dir", "from-cli"); !res.ok() {
+		t.Fatalf("gen with a command-line output-dir failed:\n%s", res.output)
 	}
 	if _, err := os.Stat(filepath.Join(f.root, "from-cli", overrideName)); err != nil {
-		t.Errorf("command-line --override-dir should win over the file: %v", err)
+		t.Errorf("command-line --output-dir should win over the file: %v", err)
 	}
 }
 

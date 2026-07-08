@@ -1,2 +1,2 @@
 apps = ["apps/worker"]
-override-dir = "from-file"
+output-dir = "from-file"
