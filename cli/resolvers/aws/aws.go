@@ -19,14 +19,14 @@ func init() {
 		Name:  "aws-secret-manager",
 		Short: "Resolve secrets from AWS Secrets Manager via the AWS SDK",
 		Long: "aws-secret-manager reads each app's secrets from AWS Secrets Manager, one\n" +
-			"plaintext secret per value. A secret is named <app>/<NAME> by default — for\n" +
+			"plaintext secret per value. A secret is named <app>/<NAME> by default; for\n" +
 			"the app 'worker', the GOOGLE_CLIENT_ID secret is 'worker/GOOGLE_CLIENT_ID'.\n" +
 			"Pass --prefix to add a leading segment, e.g. --prefix prod gives\n" +
 			"'prod/worker/GOOGLE_CLIENT_ID'. All of an app's secrets are fetched in one\n" +
 			"BatchGetSecretValue call (up to 20 per call).\n\n" +
 			"Credentials and the target account are resolved by the AWS SDK's default\n" +
-			"credential chain — environment variables, --profile, ~/.aws SSO, or an IAM\n" +
-			"role — so the account is whichever those credentials belong to. A profile\n" +
+			"credential chain: environment variables, --profile, ~/.aws SSO, or an IAM\n" +
+			"role, so the account is whichever those credentials belong to. A profile\n" +
 			"that sets role_arn/source_profile is honoured, so per-app or per-environment\n" +
 			"roles work by pointing --profile at the right profile. Pass --profile to pin\n" +
 			"a named profile instead of relying on the default; --region sets the region\n" +

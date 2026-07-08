@@ -44,7 +44,7 @@ func DeclaredNames(fields []Field) map[string]struct{} {
 	return declared
 }
 
-// Unreferenced returns the keys in provided that no declared name covers — the
+// Unreferenced returns the keys in provided that no declared name covers, the
 // values a resolver supplies that no Config field reads.
 func Unreferenced(provided map[string]string, declared map[string]struct{}) []string {
 	var extra []string

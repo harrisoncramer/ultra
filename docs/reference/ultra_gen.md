@@ -4,9 +4,9 @@ Generate the single compose override for the given apps without resolving secret
 
 ### Synopsis
 
-gen writes one names-only docker compose override — the file that maps every
+gen writes one names-only docker compose override, the file that maps every
 secret each app's Config declares onto its namespaced launcher variable, one
-service block per app — into --override-dir/--override-name. It reads only the
+service block per app, into --override-dir/--override-name. It reads only the
 apps' config packages and never contacts the secret store, so it works offline
 and its output can be committed and reused by run. Apps are the directories
 given as arguments, or those listed in .ultra.toml when none are given.

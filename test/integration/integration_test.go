@@ -3,8 +3,8 @@
 // Package integration drives the ultra CLI end to end the way a real consumer
 // runs it: a binary built with a custom secret resolver that reads from a live
 // Redis store, pointed at real fixture projects with docker compose. Unlike the
-// unit tests it exercises the parts that shell out — the docker-compose config
-// resolver, run's container launch, validate's generated go program — so a break
+// unit tests it exercises the parts that shell out (the docker-compose config
+// resolver, run's container launch, validate's generated go program) so a break
 // in that wiring is caught. It is behind the integration build tag and needs
 // docker for every scenario except gen.
 package integration
@@ -251,7 +251,7 @@ func (r *Rig) runForwardsEmptySecretValue(t *testing.T) {
 	f := r.openFixture(t, "single-app")
 	t.Cleanup(func() { r.composeDown(f) })
 
-	// The store holds the key with an empty value — distinct from not holding it.
+	// The store holds the key with an empty value, distinct from not holding it.
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": ""}); err != nil {
 		t.Fatal(err)
 	}

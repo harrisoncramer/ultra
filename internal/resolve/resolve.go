@@ -18,12 +18,12 @@ type SecretResolver interface {
 	// Resolve fetches values for names in a single round-trip and returns a map
 	// keyed by name. A name the store doesn't have is simply omitted from the map
 	// (missing individual secrets are surfaced later, at config load). A non-nil
-	// error means the store itself is unreachable — e.g. the vault does not exist
-	// or credentials are missing — and is fatal.
+	// error means the store itself is unreachable (e.g. the vault does not exist
+	// or credentials are missing) and is fatal.
 	Resolve(ctx context.Context, names []string) (map[string]string, error)
 }
 
-// ConfigResolver fetches an app's non-secret configuration — the values the
+// ConfigResolver fetches an app's non-secret configuration, the values the
 // platform provides alongside the secrets ultra resolves.
 type ConfigResolver interface {
 	// Resolve returns the non-secret environment for app. A non-nil error means

@@ -1,7 +1,7 @@
 // Package gen is the generate domain: it writes a single names-only docker
 // compose override covering every app, from the secret names each app's Config
-// declares. Generation is a static operation over each app's config package — it
-// never touches the secret store — so it works where the store is unreachable,
+// declares. Generation is a static operation over each app's config package; it
+// never touches the secret store, so it works where the store is unreachable,
 // and its output can be committed once and reused by run.
 package gen
 

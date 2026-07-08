@@ -75,8 +75,8 @@ func hasEnvOption(opts, want string) bool {
 }
 
 // eachEnvField walks the config value v and invokes fn for every leaf env-var
-// field, with the environments it is required in — its own required tag, or the
-// one inherited from the struct it is nested in — and the options of its env tag.
+// field, with the environments it is required in (its own required tag, or the
+// one inherited from the struct it is nested in) and the options of its env tag.
 // It mirrors how env.Parse descends into embedded and nested structs.
 func eachEnvField(v reflect.Value, inherited []string, seen map[reflect.Type]bool, fn func(name, envOpts string, requiredEnvs []string, val reflect.Value)) {
 	for v.Kind() == reflect.Pointer {

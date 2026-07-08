@@ -60,8 +60,8 @@ func NewLinter(params NewLinterParams) *Linter {
 }
 
 // findings is what checkApp reports for one app: the required keys no resolver
-// provides, the secrets found hardcoded in the non-secret config, and — when
-// rejectUnreferenced is set — the keys a resolver provides that no Config field
+// provides, the secrets found hardcoded in the non-secret config, and, when
+// rejectUnreferenced is set, the keys a resolver provides that no Config field
 // references.
 type findings struct {
 	missing []string
@@ -126,8 +126,8 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 }
 
 // checkApp reports the required keys app declares that neither resolver provides,
-// the secrets whose value is hardcoded in the non-secret config, and — when
-// rejectUnreferenced is set — the keys a resolver provides that no Config field
+// the secrets whose value is hardcoded in the non-secret config, and, when
+// rejectUnreferenced is set, the keys a resolver provides that no Config field
 // references. Secret fields are checked against the secret resolver's keys and
 // non-secret fields against the config resolver's; the resolved values
 // themselves are ignored, only the presence of each key matters.

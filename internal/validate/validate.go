@@ -1,5 +1,5 @@
 // Package validate is the validate domain: it reconstructs the environment each
-// app would boot with — its non-secret config plus its resolved secrets — and
+// app would boot with (its non-secret config plus its resolved secrets) and
 // loads the app's Config against it to check it parses.
 package validate
 
@@ -120,7 +120,7 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	}
 
 	// The full env the app would see: process env, then the platform's non-secret
-	// config, then the resolved secrets (real names) — later writes win.
+	// config, then the resolved secrets (real names); later writes win.
 	env := os.Environ()
 
 	configVals, err := v.configResolver.Resolve(ctx, app)
@@ -145,7 +145,7 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	}
 
 	// With rejectUnreferenced, a resolver handing back a key no Config field reads
-	// is a config drift — a stale compose var or a vault entry nothing consumes —
+	// is a config drift, a stale compose var or a vault entry nothing consumes,
 	// so fail rather than silently ignoring it.
 	if v.rejectUnreferenced {
 		declared := scan.DeclaredNames(fields)

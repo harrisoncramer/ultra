@@ -4,8 +4,8 @@ Statically check each app has no required key its resolvers won't provide
 
 ### Synopsis
 
-lint checks that every required config key an app declares is provided —
-secrets by --secret-resolver, non-secret config by --config-resolver — by
+lint checks that every required config key an app declares is provided:
+secrets by --secret-resolver, non-secret config by --config-resolver, by
 comparing the declared keys against the keys those resolvers offer. Unlike
 validate it never parses values or runs the app's config, so it works where
 the real secret values aren't reachable, such as CI with a resolver that

@@ -1,6 +1,6 @@
 # Commands
 
-This page explains what each command is for and when to reach for it. For the exact usage line and every flag, see the generated reference under [reference/](reference/ultra.md). It is produced from the command definitions themselves, so it never drifts.
+This page explains what each command is for and when to reach for it. For the exact usage line and every flag, see [reference/](reference/ultra.md) or run `ultra <command> --help`.
 
 ## gen: generating the override
 

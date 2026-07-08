@@ -28,7 +28,7 @@ ultra run apps/worker --secret-resolver vault --mount secret -- docker compose u
 
 ## Secret resolver flags
 
-Each secret resolver binds only its own flags when selected, so they do not appear in the generated command reference. They are listed here instead.
+Each secret resolver takes its own flags, passed alongside `--secret-resolver`.
 
 1password:
 

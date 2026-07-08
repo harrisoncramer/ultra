@@ -6,8 +6,8 @@ Resolve the given apps' secrets and config and validate each app's Config
 
 validate resolves secrets the same way as run (--secret-resolver), but rather
 than starting containers it reconstructs the environment each app would boot
-with — its non-secret config from --config-resolver (docker-compose by default)
-plus its resolved secrets — and checks that ultra.Load parses the app's Config.
+with, its non-secret config from --config-resolver (docker-compose by default)
+plus its resolved secrets, and checks that ultra.Load parses the app's Config.
 Apps are the directories given as arguments, or those listed in .ultra.toml
 when none are given. It reports each app and exits non-zero if any fail.
 

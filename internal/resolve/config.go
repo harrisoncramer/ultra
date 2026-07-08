@@ -180,8 +180,8 @@ func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[stri
 	return d.services[app], nil
 }
 
-// LeakedSecrets reports which of names carry a literal value in the compose file
-// — a secret hardcoded in non-secret config rather than resolved from the store.
+// LeakedSecrets reports which of names carry a literal value in the compose file,
+// a secret hardcoded in non-secret config rather than resolved from the store.
 // It reads with --no-interpolate so an entry that forwards a variable (contains
 // ${...}) reads as a reference and is not flagged, only a real pasted value is.
 func (d *dockerComposeConfig) LeakedSecrets(ctx context.Context, app string, names []string) ([]string, error) {

@@ -112,7 +112,7 @@ ultra validate apps/worker --secret-resolver 1password --vault Engineering      
 ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # regenerates the override, injects DATABASE_URL, starts the container
 ```
 
-`gen` is a separate step only when you want the override file without the store — in CI, or to commit it. `run` regenerates it itself, so for the plain local loop you can skip straight to it.
+`gen` is a separate step only when you want the override file without the store, for CI or to commit it. `run` regenerates it itself, so for the plain local loop you can skip straight to it.
 
 4. Optional: add an `.ultra.toml` at the repo root, naming your apps and secret store, so you can drop the flags:
 
@@ -146,4 +146,4 @@ Concepts and guides:
 
 Command reference, with the usage line and every flag for each command:
 
-- [reference/](docs/reference/ultra.md): generated from the command tree with `mise run gen-docs`. Do not edit by hand.
+- [reference/](docs/reference/ultra.md)
