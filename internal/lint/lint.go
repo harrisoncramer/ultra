@@ -13,7 +13,14 @@ import (
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 	"github.com/harrisoncramer/ultra/internal/scan"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// maxConcurrentApps bounds how many apps are checked at once, so a project with
+// many apps doesn't spawn an unbounded number of resolver subprocesses (op,
+// docker) simultaneously.
+const maxConcurrentApps = 8
 
 // scanner reports an app's declared fields.
 type scanner interface {
@@ -64,10 +71,30 @@ type findings struct {
 // reports each app. It returns an error if any app is missing a required key or
 // (with rejectUnreferenced) is handed an unreferenced one.
 func (l *Linter) Lint(ctx context.Context, apps []string) error {
+	// Check every app concurrently; each app's resolver round-trips are
+	// independent. Lint reports all apps even when some fail, so goroutines never
+	// return an error (that would cancel the group); each app's result lands in
+	// its own slot and is reported in input order.
+	type result struct {
+		found findings
+		err   error
+	}
+	results := make([]result, len(apps))
+	g := new(errgroup.Group)
+	g.SetLimit(maxConcurrentApps)
+	for i, appPath := range apps {
+		g.Go(func() error {
+			found, err := l.checkApp(ctx, appPath)
+			results[i] = result{found: found, err: err}
+			return nil
+		})
+	}
+	_ = g.Wait()
+
 	failed := 0
-	for _, appPath := range apps {
+	for i, appPath := range apps {
 		app := l.project.AppName(appPath)
-		found, err := l.checkApp(ctx, appPath)
+		found, err := results[i].found, results[i].err
 		switch {
 		case err != nil:
 			failed++
