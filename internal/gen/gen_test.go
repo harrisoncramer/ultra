@@ -87,6 +87,27 @@ func TestGeneratePreservesInputOrder(t *testing.T) {
 	assert.Equal(t, []string{"one", "two", "three"}, got)
 }
 
+func TestGenerateRejectsCollidingAppNames(t *testing.T) {
+	cases := []struct {
+		name string
+		apps []string
+	}{
+		{"same path twice", []string{"apps/worker", "apps/worker"}},
+		{"different paths, same basename", []string{"apps/worker", "svc/worker"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			_, err := newTestGenerator(root, []string{"A"}).Generate(c.apps)
+			require.Error(t, err, "colliding app names must not silently produce a duplicate service block")
+			assert.Contains(t, err.Error(), "worker")
+
+			_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.yml"))
+			assert.ErrorIs(t, statErr, os.ErrNotExist, "no file is written when app names collide")
+		})
+	}
+}
+
 func TestGenerateHonorsOutputDir(t *testing.T) {
 	root := t.TempDir()
 	g := NewGenerator(NewGeneratorParams{
