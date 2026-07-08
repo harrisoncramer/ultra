@@ -1,5 +1,7 @@
 # ultra
 
+![Ultra](docs/assets/ultra.png)
+
 Ultra provides an opinionated and declarative framework for configuring Go apps with Docker.
 
 Most configuration tools answer one question: "How do I load configuration?" 
