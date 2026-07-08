@@ -4,6 +4,7 @@ package integration
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 	"time"
@@ -16,10 +17,10 @@ type redisStore struct {
 	addr string
 }
 
-// startRedisStore launches a Redis container with a published port and waits for
-// it to accept connections.
+// startRedisStore launches a Redis container with a published port and waits
+// until it accepts connections on the host, the same path the resolver uses.
 func startRedisStore() (*redisStore, error) {
-	out, err := exec.Command("docker", "run", "-d", "--rm", "-p", "0:6379", "redis:7-alpine").CombinedOutput()
+	out, err := exec.Command("docker", "run", "-d", "--rm", "-p", "6379", "redis:7-alpine").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker run redis: %w: %s", err, out)
 	}
@@ -27,40 +28,66 @@ func startRedisStore() (*redisStore, error) {
 	s := &redisStore{cid: cid}
 
 	// The published port mapping and the server itself both settle a moment after
-	// `docker run` returns, so poll for each.
-	deadline := time.Now().Add(30 * time.Second)
+	// `docker run` returns, so poll for each and surface the last error on timeout.
+	var last error
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		if s.addr == "" {
-			if addr, err := publishedAddr(cid); err == nil {
+			if addr, err := hostPort(cid); err == nil {
 				s.addr = addr
+			} else {
+				last = err
 			}
 		}
-		if s.addr != "" && s.ping() {
-			return s, nil
+		if s.addr != "" {
+			if err := pingAddr(s.addr); err == nil {
+				return s, nil
+			} else {
+				last = err
+			}
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
 	s.Close()
-	return nil, fmt.Errorf("redis did not become ready")
+	return nil, fmt.Errorf("redis did not become ready: %v", last)
 }
 
-// publishedAddr returns the host address Redis's 6379 port is published on.
-func publishedAddr(cid string) (string, error) {
-	out, err := exec.Command("docker", "port", cid, "6379/tcp").CombinedOutput()
+// hostPort returns the host address the container's 6379 port is published on,
+// read from docker inspect so it doesn't depend on `docker port` output format.
+func hostPort(cid string) (string, error) {
+	const format = `{{(index (index .NetworkSettings.Ports "6379/tcp") 0).HostPort}}`
+	out, err := exec.Command("docker", "inspect", "--format", format, cid).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("docker port: %w: %s", err, out)
+		return "", fmt.Errorf("docker inspect: %w: %s", err, out)
 	}
-	first := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
-	i := strings.LastIndex(first, ":")
-	if i < 0 {
-		return "", fmt.Errorf("unexpected port mapping %q", first)
+	port := strings.TrimSpace(string(out))
+	if port == "" || port == "<no value>" {
+		return "", fmt.Errorf("no host port published yet")
 	}
-	return "127.0.0.1:" + first[i+1:], nil
+	return "127.0.0.1:" + port, nil
 }
 
-func (s *redisStore) ping() bool {
-	out, err := exec.Command("docker", "exec", s.cid, "redis-cli", "PING").CombinedOutput()
-	return err == nil && strings.TrimSpace(string(out)) == "PONG"
+// pingAddr dials the published port and issues a RESP PING, so readiness is
+// checked over the real connection the resolver will use.
+func pingAddr(addr string) error {
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := conn.Write([]byte("PING\r\n")); err != nil {
+		return err
+	}
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(buf[:n]), "PONG") {
+		return fmt.Errorf("unexpected ping reply %q", buf[:n])
+	}
+	return nil
 }
 
 // Seed writes an app's secrets into the store.
