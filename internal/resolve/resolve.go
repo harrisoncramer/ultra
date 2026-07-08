@@ -6,11 +6,19 @@ package resolve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/pflag"
 )
+
+// ErrSecretNotFound signals that a store has no entry for an app at all, as
+// opposed to an auth or connectivity failure. A base resolver returning it is
+// fatal, but the override layer treats it as "this override doesn't cover the
+// app" and falls through to the base resolver, so an override only needs entries
+// for the apps it actually shadows.
+var ErrSecretNotFound = errors.New("secret not found")
 
 // SecretResolver fetches secrets from a backing store in bulk. Implement it to
 // add a new secret backend.
@@ -19,7 +27,9 @@ type SecretResolver interface {
 	// keyed by name. A name the store doesn't have is simply omitted from the map
 	// (missing individual secrets are surfaced later, at config load). A non-nil
 	// error means the store itself is unreachable (e.g. the vault does not exist
-	// or credentials are missing) and is fatal.
+	// or credentials are missing) and is fatal; return an error wrapping
+	// ErrSecretNotFound to say the store has no entry for this app so an override
+	// can fall through to the base resolver.
 	Resolve(ctx context.Context, names []string) (map[string]string, error)
 }
 
@@ -86,6 +96,9 @@ func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map
 	}
 	ov, err := l.override.Resolve(ctx, names)
 	if err != nil {
+		if errors.Is(err, ErrSecretNotFound) {
+			return out, nil
+		}
 		return nil, fmt.Errorf("secret override resolver: %w", err)
 	}
 	return mergeOver(out, ov), nil

@@ -17,6 +17,10 @@ type (
 	ConfigResolverCommand = resolve.ConfigResolverCommand
 )
 
+// ErrSecretNotFound is returned by a secret resolver when the store has no entry
+// for an app, letting the override layer fall through to the base resolver.
+var ErrSecretNotFound = resolve.ErrSecretNotFound
+
 // RegisterSecretResolver adds a secret resolver. Call before Execute.
 func RegisterSecretResolver(rc SecretResolverCommand) {
 	resolve.RegisterSecretResolver(rc)

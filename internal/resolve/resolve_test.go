@@ -2,6 +2,8 @@ package resolve
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -31,6 +33,52 @@ func TestLayeredSecretResolverOverrideWins(t *testing.T) {
 	got, err := l.Resolve(context.Background(), []string{"A", "B", "C"})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"A": "base", "B": "override", "C": "override"}, got)
+}
+
+func TestLayeredSecretResolverEmptyOverrideFallsThroughToBase(t *testing.T) {
+	l := layeredSecretResolver{
+		base:     mapResolver{have: map[string]string{"A": "base", "B": "base"}},
+		override: mapResolver{have: map[string]string{}},
+	}
+	got, err := l.Resolve(context.Background(), []string{"A", "B"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A": "base", "B": "base"}, got)
+}
+
+// errResolver is a secret resolver that always fails with a fixed error.
+type errResolver struct{ err error }
+
+func (e errResolver) Resolve(context.Context, []string) (map[string]string, error) {
+	return nil, e.err
+}
+
+func TestLayeredSecretResolverOverrideNotFoundFallsThroughToBase(t *testing.T) {
+	l := layeredSecretResolver{
+		base:     mapResolver{have: map[string]string{"A": "base"}},
+		override: errResolver{err: fmt.Errorf("op item get: %w", ErrSecretNotFound)},
+	}
+	got, err := l.Resolve(context.Background(), []string{"A"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A": "base"}, got)
+}
+
+func TestLayeredSecretResolverOverrideOtherErrorIsFatal(t *testing.T) {
+	l := layeredSecretResolver{
+		base:     mapResolver{have: map[string]string{"A": "base"}},
+		override: errResolver{err: errors.New("1password auth failed")},
+	}
+	_, err := l.Resolve(context.Background(), []string{"A"})
+	require.Error(t, err)
+}
+
+func TestLayeredSecretResolverBaseNotFoundIsFatal(t *testing.T) {
+	l := layeredSecretResolver{
+		base:     errResolver{err: fmt.Errorf("op item get: %w", ErrSecretNotFound)},
+		override: mapResolver{have: map[string]string{"A": "override"}},
+	}
+	_, err := l.Resolve(context.Background(), []string{"A"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSecretNotFound)
 }
 
 func TestLayeredSecretResolverNilOverrideIsBase(t *testing.T) {

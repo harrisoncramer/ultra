@@ -8,9 +8,28 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/harrisoncramer/ultra/cli"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// A 404 is the override case: Vault has no secret for this app, so Resolve
+// reports ErrSecretNotFound and the override layer falls through to the base
+// resolver rather than failing the run.
+func TestResolveMissingSecretIsSecretNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("VAULT_TOKEN", "test-token")
+
+	v := vaultKV{app: "axle", mount: "secret", address: srv.URL}
+	_, err := v.Resolve(t.Context(), []string{"DATABASE_URL"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, cli.ErrSecretNotFound)
+}
 
 type vaultResolveCase struct {
 	name       string
