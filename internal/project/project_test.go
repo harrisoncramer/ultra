@@ -1,4 +1,4 @@
-package cli
+package project
 
 import (
 	"testing"
@@ -24,7 +24,8 @@ func TestAppConfigDir(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assert.Equal(t, c.want, appConfigDir(c.root, c.appPath, c.configDir))
+			p := Project{Root: c.root, ConfigDir: c.configDir}
+			assert.Equal(t, c.want, p.AppConfigDir(c.appPath))
 		})
 	}
 }
@@ -43,7 +44,7 @@ func TestAppName(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			assert.Equal(t, c.want, appName(c.appPath))
+			assert.Equal(t, c.want, Project{}.AppName(c.appPath))
 		})
 	}
 }

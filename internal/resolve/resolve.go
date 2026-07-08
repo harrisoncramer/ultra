@@ -1,18 +1,13 @@
-// Package cli builds ultra's command tree and lets consumers extend it with
-// their own resolvers. Import it, register a secret resolver of your own, and
-// call Execute — the built-in resolvers come along, so you never fork ultra's
-// cmd to add a backend.
-//
-// ultra has two symmetric resolver kinds. A SecretResolver says where secrets
-// come from (1Password, AWS Secrets Manager, ...). A ConfigResolver says where an
-// app's non-secret configuration comes from (docker-compose locally, the process
-// env in a running container/pod, ...). validate combines both to reconstruct the
-// full environment an app would boot with.
-package cli
+// Package resolve defines ultra's secret and config resolver interfaces, the
+// registry backends register into, and the layering that lets an override
+// resolver win over a base one. The public cli package re-exports these types so
+// custom builds can register their own resolvers.
+package resolve
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/pflag"
 )
@@ -37,9 +32,8 @@ type ConfigResolver interface {
 }
 
 // SecretResolverCommand describes a secret resolver exposed as a subcommand of
-// `ultra run` and `ultra validate`. Setup binds the resolver's own flags on fs
-// and returns a factory that builds a resolver for a given app once those flags
-// are parsed.
+// ultra's commands. Setup binds the resolver's own flags on fs and returns a
+// factory that builds a resolver for a given app once those flags are parsed.
 type SecretResolverCommand struct {
 	Name  string
 	Short string
@@ -53,6 +47,25 @@ var secretResolvers []SecretResolverCommand
 // resolvers register themselves; call this before Execute to add your own.
 func RegisterSecretResolver(rc SecretResolverCommand) {
 	secretResolvers = append(secretResolvers, rc)
+}
+
+// FindSecretResolver returns the secret resolver command registered under name.
+func FindSecretResolver(name string) (SecretResolverCommand, bool) {
+	for _, rc := range secretResolvers {
+		if rc.Name == name {
+			return rc, true
+		}
+	}
+	return SecretResolverCommand{}, false
+}
+
+// SecretResolverNames lists the registered secret resolver names for help text.
+func SecretResolverNames() string {
+	names := make([]string, len(secretResolvers))
+	for i, rc := range secretResolvers {
+		names[i] = rc.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 // layeredSecretResolver queries base then layers override on top, so an override
@@ -83,9 +96,9 @@ func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map
 	return out, nil
 }
 
-// layerSecretResolver wraps base so the override's values win, or returns base
+// LayerSecretResolver wraps base so the override's values win, or returns base
 // unchanged when no override is configured.
-func layerSecretResolver(base, override func(app string) SecretResolver) func(app string) SecretResolver {
+func LayerSecretResolver(base, override func(app string) SecretResolver) func(app string) SecretResolver {
 	if override == nil {
 		return base
 	}
@@ -94,25 +107,21 @@ func layerSecretResolver(base, override func(app string) SecretResolver) func(ap
 	}
 }
 
-// buildSecretOverride returns the override secret resolver factory named by the
-// [secrets-override] section, or nil when none is configured. Its flags come only
-// from the file, bound on a private flag set so they never collide with the base
-// resolver's flags on the command line.
-func buildSecretOverride(fc fileConfig) func(app string) SecretResolver {
-	name := fc.override.secretResolver
+// BuildSecretOverride returns the override secret resolver factory named by name,
+// or nil when name is empty or unknown. Its flags come from flags, bound on a
+// private flag set so they never collide with the base resolver's flags.
+func BuildSecretOverride(name string, flags map[string]string) func(app string) SecretResolver {
 	if name == "" {
 		return nil
 	}
-	for _, rc := range secretResolvers {
-		if rc.Name != name {
-			continue
-		}
-		fs := pflag.NewFlagSet("secret-override", pflag.ContinueOnError)
-		factory := rc.Setup(fs)
-		applyFlagSet(fs, fc.override.secretFlags)
-		return factory
+	rc, ok := FindSecretResolver(name)
+	if !ok {
+		return nil
 	}
-	return nil
+	fs := pflag.NewFlagSet("secret-override", pflag.ContinueOnError)
+	factory := rc.Setup(fs)
+	applyFlagSet(fs, flags)
+	return factory
 }
 
 // applyFlagSet sets every flag on fs whose name has a value in vals, used to feed

@@ -1,4 +1,7 @@
-package cli
+// Package validate is the validate domain: it reconstructs the environment each
+// app would boot with — its non-secret config plus its resolved secrets — and
+// loads the app's Config against it to check it parses.
+package validate
 
 import (
 	"bytes"
@@ -10,29 +13,58 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/harrisoncramer/ultra/pkg/secrets"
+	"github.com/harrisoncramer/ultra/internal/project"
+	"github.com/harrisoncramer/ultra/internal/resolve"
+	"github.com/harrisoncramer/ultra/internal/scan"
 )
 
-type validateParams struct {
-	root               string
-	apps               []string
-	configDir          string
-	environment        string
-	rejectUnreferenced bool
-	secretResolver     func(app string) SecretResolver
-	configResolver     ConfigResolver
+// Scanner reports an app's declared fields and its config package import path.
+type Scanner interface {
+	Fields(dir string) ([]scan.Field, error)
+	ConfigImportPath(dir string) (string, error)
 }
 
-// validate reconstructs the environment each app would boot with — its
-// non-secret config from the config resolver plus its secrets from the secret
-// resolver — and loads the app's Config with ultra.Load against it, so
-// caarlos0/env does the checking. It reports each app and exits non-zero if any
-// fail.
-func validate(ctx context.Context, p validateParams) error {
+// Validator checks that each app's Config parses against its reconstructed
+// environment.
+type Validator struct {
+	scanner            Scanner
+	project            project.Project
+	environment        string
+	rejectUnreferenced bool
+	secretResolver     func(app string) resolve.SecretResolver
+	configResolver     resolve.ConfigResolver
+}
+
+// NewValidatorParams are the dependencies and options NewValidator needs.
+type NewValidatorParams struct {
+	Scanner            Scanner
+	Project            project.Project
+	Environment        string
+	RejectUnreferenced bool
+	SecretResolver     func(app string) resolve.SecretResolver
+	ConfigResolver     resolve.ConfigResolver
+}
+
+// NewValidator builds a Validator.
+func NewValidator(params NewValidatorParams) *Validator {
+	return &Validator{
+		scanner:            params.Scanner,
+		project:            params.Project,
+		environment:        params.Environment,
+		rejectUnreferenced: params.RejectUnreferenced,
+		secretResolver:     params.SecretResolver,
+		configResolver:     params.ConfigResolver,
+	}
+}
+
+// Validate reconstructs each app's boot environment and loads its Config with
+// ultra.Load, so caarlos0/env does the checking. It reports each app and returns
+// an error if any fail.
+func (v *Validator) Validate(ctx context.Context, apps []string) error {
 	failed := 0
-	for _, appPath := range p.apps {
-		app := appName(appPath)
-		if err := validateApp(ctx, p, appPath); err != nil {
+	for _, appPath := range apps {
+		app := v.project.AppName(appPath)
+		if err := v.validateApp(ctx, appPath); err != nil {
 			failed++
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, err)
 		} else {
@@ -45,14 +77,14 @@ func validate(ctx context.Context, p validateParams) error {
 	return nil
 }
 
-func validateApp(ctx context.Context, p validateParams, appPath string) error {
-	app := appName(appPath)
-	dir := appConfigDir(p.root, appPath, p.configDir)
-	importPath, err := secrets.ConfigImportPath(dir)
+func (v *Validator) validateApp(ctx context.Context, appPath string) error {
+	app := v.project.AppName(appPath)
+	dir := v.project.AppConfigDir(appPath)
+	importPath, err := v.scanner.ConfigImportPath(dir)
 	if err != nil {
 		return err
 	}
-	fields, err := secrets.Fields(dir)
+	fields, err := v.scanner.Fields(dir)
 	if err != nil {
 		return err
 	}
@@ -67,33 +99,33 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	// config, then the resolved secrets (real names) — later writes win.
 	env := os.Environ()
 
-	configVals, err := p.configResolver.Resolve(ctx, app)
+	configVals, err := v.configResolver.Resolve(ctx, app)
 	if err != nil {
 		return err
 	}
-	for k, v := range configVals {
-		env = append(env, k+"="+v)
+	for k, val := range configVals {
+		env = append(env, k+"="+val)
 	}
 
 	// Only hit the secret store if the app actually declares secrets; an app with
 	// none (e.g. no secret-tagged fields) has no vault item to fetch.
 	var secretVals map[string]string
 	if len(names) > 0 {
-		secretVals, err = p.secretResolver(app).Resolve(ctx, names)
+		secretVals, err = v.secretResolver(app).Resolve(ctx, names)
 		if err != nil {
 			return err
 		}
-		for k, v := range secretVals {
-			env = append(env, k+"="+v)
+		for k, val := range secretVals {
+			env = append(env, k+"="+val)
 		}
 	}
 
 	// With rejectUnreferenced, a resolver handing back a key no Config field reads
 	// is a config drift — a stale compose var or a vault entry nothing consumes —
 	// so fail rather than silently ignoring it.
-	if p.rejectUnreferenced {
-		declared := declaredNames(fields)
-		extra := append(unreferenced(secretVals, declared), unreferenced(configVals, declared)...)
+	if v.rejectUnreferenced {
+		declared := scan.DeclaredNames(fields)
+		extra := append(scan.Unreferenced(secretVals, declared), scan.Unreferenced(configVals, declared)...)
 		if len(extra) > 0 {
 			sort.Strings(extra)
 			return fmt.Errorf("resolvers provided unreferenced keys: %s", strings.Join(extra, ", "))
@@ -103,7 +135,7 @@ func validateApp(ctx context.Context, p validateParams, appPath string) error {
 	// The generated program lives inside the app's module so it can import the
 	// config package; it is removed once validation finishes.
 	genDir := filepath.Join(filepath.Dir(dir), "ultravalidate")
-	if err := writeValidateMain(genDir, importPath, p.environment); err != nil {
+	if err := writeValidateMain(genDir, importPath, v.environment); err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(genDir) }()

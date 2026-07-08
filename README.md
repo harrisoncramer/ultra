@@ -4,7 +4,7 @@ Ultra provides an opinionated and declarative framework to configuring Go apps w
 
 With ultra, you can inject, parse, and validate secrets and configuration for each containerized application without having to re-define secrets repeatedly. Define your app's configuration once, and let Ultra do the rest.
 
-NOTE: This project is still under development. Expect breaking changes.
+NOTE: This project is still under development. Expect breaking changes!
 
 ## Why ultra
 
