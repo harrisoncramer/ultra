@@ -1,4 +1,4 @@
-module ultraitfixture
+module ultrait-single
 
 go 1.25.1
 

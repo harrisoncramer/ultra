@@ -1,0 +1,11 @@
+services:
+  server:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+    command: ["sh", "-c", "true"]
+  worker:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+    command: ["sh", "-c", "true"]
