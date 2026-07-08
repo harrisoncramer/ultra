@@ -1,7 +1,7 @@
 # ultra
 
 <p align="center">
-  <img src="docs/assets/ultra.png" alt="Ultra" width="250" />
+  <img src="docs/assets/ultra.png" alt="Ultra" width="350" />
 </p>
 
 Ultra provides an opinionated and declarative framework for configuring Go apps with Docker.
