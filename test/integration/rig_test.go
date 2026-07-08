@@ -13,7 +13,14 @@ import (
 )
 
 // fixtureNames are the testdata projects materialized once per rig.
-var fixtureNames = []string{"single-app", "multi-app", "scoped-envs"}
+var fixtureNames = []string{
+	"single-app",
+	"multi-app",
+	"scoped-envs",
+	"malformed",
+	"custom-config-dir",
+	"config-file",
+}
 
 // Rig holds the shared, expensive setup the scenarios run against: the compiled
 // harness binary, the tidied fixture templates, and — when docker is present —
@@ -110,11 +117,12 @@ func (r *Rig) requireStore(t *testing.T) *redisStore {
 	return r.store
 }
 
-// composeDown tears down an app's compose project after a run brings it up.
-func (r *Rig) composeDown(f *fixture, app string) {
+// composeDown tears down a fixture's compose project after a run brings it up.
+// The base file alone identifies the project (same dir, same project name), so
+// the generated override isn't needed to stop it.
+func (r *Rig) composeDown(f *fixture) {
 	_ = exec.Command("docker", "compose",
 		"-f", filepath.Join(f.root, "docker-compose.yml"),
-		"-f", f.overridePath(app),
 		"down", "-v", "--remove-orphans").Run()
 }
 

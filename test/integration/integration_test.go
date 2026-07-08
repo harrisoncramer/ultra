@@ -29,6 +29,12 @@ func TestIntegration(t *testing.T) {
 	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
 	t.Run("validate enforces env-scoped required", r.validateEnvScopedRequired)
 	t.Run("lint flags a hardcoded secret", r.lintFlagsHardcodedSecret)
+	t.Run("run injects a value with special characters verbatim", r.runInjectsSpecialCharValue)
+	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
+	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
+	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
+	t.Run("gen honors a custom config dir", r.genHonorsConfigDir)
+	t.Run("config file supplies defaults the command line overrides", r.configFilePrecedence)
 }
 
 func (r *Rig) genListsAllDeclaredSecrets(t *testing.T) {
@@ -57,7 +63,7 @@ func (r *Rig) genListsAllDeclaredSecrets(t *testing.T) {
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
 	s := r.requireStore(t)
 	f := r.openFixture(t, "single-app")
-	t.Cleanup(func() { r.composeDown(f, "worker") })
+	t.Cleanup(func() { r.composeDown(f) })
 
 	if err := s.Seed("worker", map[string]string{
 		"IT_DB_URL":  "postgres://run-it",
@@ -82,7 +88,7 @@ func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
 func (r *Rig) runLeavesUnresolvedSecretEmpty(t *testing.T) {
 	s := r.requireStore(t)
 	f := r.openFixture(t, "single-app")
-	t.Cleanup(func() { r.composeDown(f, "worker") })
+	t.Cleanup(func() { r.composeDown(f) })
 
 	// Only one of the two declared secrets is in the store.
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://only-db"}); err != nil {
@@ -210,6 +216,143 @@ func (r *Rig) lintFlagsHardcodedSecret(t *testing.T) {
 	}
 	if strings.Contains(leak.output, "IT_DB_URL") {
 		t.Errorf("a ${...} forward must not be flagged:\n%s", leak.output)
+	}
+}
+
+func (r *Rig) runInjectsSpecialCharValue(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// A value laden with compose- and shell-significant characters must reach the
+	// container untouched: no re-interpolation of $VAR/${VAR}, no word splitting.
+	const gnarly = `p@ss w0rd$X-${Y}="z"`
+	if err := s.Seed("worker", map[string]string{
+		"IT_DB_URL":  "postgres://it",
+		"IT_API_KEY": gnarly,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "IT_API_KEY="+gnarly) {
+		t.Errorf("special-char value was not delivered verbatim\n%s", res.output)
+	}
+}
+
+func (r *Rig) runForwardsEmptySecretValue(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// The store holds the key with an empty value — distinct from not holding it.
+	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": ""}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+	// An empty value is still a resolved secret, so both count, and the container
+	// sees IT_API_KEY as empty.
+	if !strings.Contains(res.output, "resolved 2/2 secrets for worker") {
+		t.Errorf("an empty value should count as resolved\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "IT_API_KEY=\n") {
+		t.Errorf("empty secret should reach the container as empty\n%s", res.output)
+	}
+}
+
+func (r *Rig) runSkipsAppWithoutSecrets(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "multi-app")
+
+	if err := s.Seed("server", map[string]string{"DATABASE_URL": "srv", "SERVER_TOKEN": "st"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Seed("worker", map[string]string{"DATABASE_URL": "wrk", "WORKER_TOKEN": "wt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/server", "apps/worker", "apps/nosec", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "true")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+
+	// nosec declares no secrets, so it gets no override; the others still do.
+	if _, err := os.Stat(f.overridePath("nosec")); !os.IsNotExist(err) {
+		t.Errorf("an app with no secrets should get no override (stat err: %v)", err)
+	}
+	assertFileContains(t, f.overridePath("server"), "DATABASE_URL: ${ULTRA_SERVER__DATABASE_URL}")
+	assertFileContains(t, f.overridePath("worker"), "DATABASE_URL: ${ULTRA_WORKER__DATABASE_URL}")
+}
+
+func (r *Rig) validateRedactsMalformedValue(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "malformed")
+
+	// IT_PORT is an int field, so a non-numeric value fails parsing; the value is
+	// a secret, so it must be redacted from the reported error.
+	if err := s.Seed("app", map[string]string{"IT_TOKEN": "tok", "IT_PORT": "not-a-number"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"validate", "apps/app", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if res.ok() {
+		t.Fatalf("validate should fail on a malformed value:\n%s", res.output)
+	}
+	if strings.Contains(res.output, "not-a-number") {
+		t.Errorf("the malformed secret value leaked into the error:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "[redacted]") {
+		t.Errorf("expected the value to be redacted:\n%s", res.output)
+	}
+}
+
+func (r *Rig) genHonorsConfigDir(t *testing.T) {
+	// gen is a static scan, so this needs neither docker nor the store.
+	f := r.openFixture(t, "custom-config-dir")
+
+	ok := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--config-dir", "pkg/config", "--override-dir", "out")
+	if !ok.ok() {
+		t.Fatalf("gen should find the config under pkg/config:\n%s", ok.output)
+	}
+	assertFileContains(t, filepath.Join(f.root, "out", "worker.compose.yml"), "IT_API_KEY: ${ULTRA_WORKER__IT_API_KEY}")
+
+	// The default config dir is "config", which this fixture doesn't have, so
+	// gen must fail without the flag.
+	if bad := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--override-dir", "out2"); bad.ok() {
+		t.Errorf("gen should fail when the config dir is wrong:\n%s", bad.output)
+	}
+}
+
+func (r *Rig) configFilePrecedence(t *testing.T) {
+	// gen is a static scan, so this needs neither docker nor the store.
+	f := r.openFixture(t, "config-file")
+
+	// No app args and no --override-dir: both come from .ultra.toml.
+	if res := r.ultra(t, "gen", "--root", f.root); !res.ok() {
+		t.Fatalf("gen should use apps and override-dir from .ultra.toml:\n%s", res.output)
+	}
+	assertFileContains(t, filepath.Join(f.root, "from-file", "worker.compose.yml"), "IT_API_KEY:")
+
+	// A command-line --override-dir wins over the file's value.
+	if res := r.ultra(t, "gen", "--root", f.root, "--override-dir", "from-cli"); !res.ok() {
+		t.Fatalf("gen with a command-line override-dir failed:\n%s", res.output)
+	}
+	if _, err := os.Stat(filepath.Join(f.root, "from-cli", "worker.compose.yml")); err != nil {
+		t.Errorf("command-line --override-dir should win over the file: %v", err)
 	}
 }
 
