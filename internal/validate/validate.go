@@ -16,7 +16,14 @@ import (
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 	"github.com/harrisoncramer/ultra/internal/scan"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// maxConcurrentApps bounds how many apps are validated at once, so a project
+// with many apps doesn't spawn an unbounded number of resolver subprocesses and
+// `go run` builds simultaneously.
+const maxConcurrentApps = 8
 
 // scanner reports an app's declared fields and its config package import path.
 type scanner interface {
@@ -61,12 +68,27 @@ func NewValidator(params NewValidatorParams) *Validator {
 // ultra.Load, so caarlos0/env does the checking. It reports each app and returns
 // an error if any fail.
 func (v *Validator) Validate(ctx context.Context, apps []string) error {
+	// Each app is validated independently, so run them concurrently. Validate
+	// reports every app even when some fail, so goroutines never return an error
+	// (that would cancel the group); each app's outcome lands in its own slot and
+	// is reported in input order after the group finishes.
+	errs := make([]error, len(apps))
+	g := new(errgroup.Group)
+	g.SetLimit(maxConcurrentApps)
+	for i, appPath := range apps {
+		g.Go(func() error {
+			errs[i] = v.validateApp(ctx, appPath)
+			return nil
+		})
+	}
+	_ = g.Wait()
+
 	failed := 0
-	for _, appPath := range apps {
+	for i, appPath := range apps {
 		app := v.project.AppName(appPath)
-		if err := v.validateApp(ctx, appPath); err != nil {
+		if errs[i] != nil {
 			failed++
-			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, err)
+			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, errs[i])
 		} else {
 			fmt.Fprintf(os.Stderr, "ok    %s\n", app)
 		}
