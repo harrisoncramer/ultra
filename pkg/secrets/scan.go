@@ -130,8 +130,14 @@ func SecretNames(dir string) ([]string, error) {
 // configStruct type-checks the Go package at dir and returns the underlying
 // struct of its exported Config, failing if the package has no such struct.
 func configStruct(dir string) (*types.Struct, error) {
+	// NeedTypes type-checks the package at dir; NeedImports resolves its imports
+	// from export data so an embedded or nested struct defined in another package
+	// still resolves. NeedDeps is deliberately omitted: it type-checks the whole
+	// transitive dependency closure from source and holds it in memory, which for
+	// an app config that embeds a shared struct (pulling in large SDKs) costs
+	// gigabytes and is slow. Reading only field tags needs none of that.
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports,
 		Dir:  dir,
 	}
 	pkgs, err := packages.Load(cfg, ".")
