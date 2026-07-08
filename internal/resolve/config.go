@@ -72,6 +72,15 @@ func ConfigResolverNames() string {
 	return strings.Join(names, ", ")
 }
 
+// SecretLeakChecker is an optional capability of a ConfigResolver: it reports
+// which of the given secret names carry a literal value in the non-secret config
+// source, so lint can flag a secret hardcoded where only non-secret config
+// belongs. A resolver whose source can't express a hardcoded value (e.g. the
+// process environment) need not implement it.
+type SecretLeakChecker interface {
+	LeakedSecrets(ctx context.Context, app string, names []string) ([]string, error)
+}
+
 // layeredConfigResolver queries base then layers override on top, so an override
 // value wins over the base for the same key. A nil override is a no-op.
 type layeredConfigResolver struct {
@@ -93,6 +102,31 @@ func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[str
 		return nil, fmt.Errorf("config override resolver: %w", err)
 	}
 	return mergeOver(out, ov), nil
+}
+
+// LeakedSecrets unions the leaked secrets the base and override report, so a
+// secret hardcoded in either source is flagged. A resolver that doesn't
+// implement SecretLeakChecker contributes nothing.
+func (l layeredConfigResolver) LeakedSecrets(ctx context.Context, app string, names []string) ([]string, error) {
+	seen := make(map[string]bool)
+	var leaked []string
+	for _, r := range []ConfigResolver{l.base, l.override} {
+		lc, ok := r.(SecretLeakChecker)
+		if !ok {
+			continue
+		}
+		found, err := lc.LeakedSecrets(ctx, app, names)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range found {
+			if !seen[n] {
+				seen[n] = true
+				leaked = append(leaked, n)
+			}
+		}
+	}
+	return leaked, nil
 }
 
 // LayerConfigResolver wraps base so the override's values win, or returns base
@@ -122,29 +156,64 @@ func BuildConfigOverride(name string, flags map[string]string, root string) (Con
 }
 
 // dockerComposeConfig reads apps' non-secret environment from a docker-compose
-// file via `docker compose config`. The file is read once and cached across apps.
+// file via `docker compose config`. Each read is cached across apps; the raw,
+// non-interpolated read used for leak detection is cached separately.
 type dockerComposeConfig struct {
 	composeFile string
 
 	once     sync.Once
 	services map[string]map[string]string
 	err      error
+
+	rawOnce     sync.Once
+	rawServices map[string]map[string]string
+	rawErr      error
 }
 
 // Resolve returns app's non-secret environment from the compose file, loading
 // and caching the file on first use.
 func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
-	d.once.Do(func() { d.services, d.err = d.load(ctx) })
+	d.once.Do(func() { d.services, d.err = d.load(ctx, false) })
 	if d.err != nil {
 		return nil, d.err
 	}
 	return d.services[app], nil
 }
 
-// load runs `docker compose config` once and returns each service's non-secret
-// environment keyed by service name.
-func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]string, error) {
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", d.composeFile, "config", "--format", "json")
+// LeakedSecrets reports which of names carry a literal value in the compose file
+// — a secret hardcoded in non-secret config rather than resolved from the store.
+// It reads with --no-interpolate so an entry that forwards a variable (contains
+// ${...}) reads as a reference and is not flagged, only a real pasted value is.
+func (d *dockerComposeConfig) LeakedSecrets(ctx context.Context, app string, names []string) ([]string, error) {
+	d.rawOnce.Do(func() { d.rawServices, d.rawErr = d.load(ctx, true) })
+	if d.rawErr != nil {
+		return nil, d.rawErr
+	}
+	return literalLeaks(d.rawServices[app], names), nil
+}
+
+// literalLeaks returns the names whose value in env is a literal: present,
+// non-empty, and not a ${...} reference. A value that forwards a variable is a
+// reference, not a hardcoded secret, so it is excluded.
+func literalLeaks(env map[string]string, names []string) []string {
+	var leaked []string
+	for _, name := range names {
+		if v, ok := env[name]; ok && v != "" && !strings.Contains(v, "${") {
+			leaked = append(leaked, name)
+		}
+	}
+	return leaked
+}
+
+// load runs `docker compose config` once and returns each service's environment
+// keyed by service name. With noInterpolate set, values keep their ${...}
+// references instead of being resolved, so a literal can be told from a forward.
+func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map[string]map[string]string, error) {
+	args := []string{"compose", "-f", d.composeFile, "config", "--format", "json"}
+	if noInterpolate {
+		args = append(args, "--no-interpolate")
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

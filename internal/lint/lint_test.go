@@ -27,6 +27,23 @@ func (c configMapResolver) Resolve(context.Context, string) (map[string]string, 
 	return c.have, nil
 }
 
+// leakyConfigResolver reports a fixed set of secret names as hardcoded in the
+// non-secret config, exercising lint's SecretLeakChecker path.
+type leakyConfigResolver struct {
+	configMapResolver
+	hardcoded map[string]bool
+}
+
+func (l leakyConfigResolver) LeakedSecrets(_ context.Context, _ string, names []string) ([]string, error) {
+	var out []string
+	for _, n := range names {
+		if l.hardcoded[n] {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
 // flat declares SECRET_TOKEN (required secret) and PLAIN (optional non-secret).
 var flatFields = []scan.Field{
 	{Name: "PLAIN"},
@@ -139,6 +156,32 @@ func TestLintApp(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, c.wantMissing, found.missing)
 			assert.Equal(t, c.wantExtra, found.extra)
+			assert.Nil(t, found.leaked, "config resolver without leak-checking reports no leaks")
 		})
 	}
+}
+
+func TestLintFlagsHardcodedSecret(t *testing.T) {
+	l := NewLinter(NewLinterParams{
+		Scanner:        fakeScanner{fields: flatFields},
+		Project:        project.Project{},
+		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
+		ConfigResolver: leakyConfigResolver{hardcoded: map[string]bool{"SECRET_TOKEN": true}},
+	})
+	found, err := l.checkApp(context.Background(), "app")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"SECRET_TOKEN"}, found.leaked)
+	assert.Empty(t, found.missing, "the secret is provided by the store, just also hardcoded")
+}
+
+func TestLintNoLeakWhenSecretOnlyInStore(t *testing.T) {
+	l := NewLinter(NewLinterParams{
+		Scanner:        fakeScanner{fields: flatFields},
+		Project:        project.Project{},
+		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
+		ConfigResolver: leakyConfigResolver{hardcoded: map[string]bool{}},
+	})
+	found, err := l.checkApp(context.Background(), "app")
+	require.NoError(t, err)
+	assert.Empty(t, found.leaked)
 }
