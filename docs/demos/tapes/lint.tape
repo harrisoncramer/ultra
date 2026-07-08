@@ -25,18 +25,18 @@ Show
 
 Type "# lint compares the keys Config requires against the keys the resolver offers"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "# It never reads a value, so it runs where the real secrets aren't reachable"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "ultra lint apps/worker --secret-resolver env"
 Enter
-Sleep 2500ms
+Sleep 4.5s
 Type "# Remove a required key and lint catches the drift"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "unset STRIPE_SECRET_KEY"
 Enter
 Type "ultra lint apps/worker --secret-resolver env"
 Enter
-Sleep 4s
+Sleep 6s

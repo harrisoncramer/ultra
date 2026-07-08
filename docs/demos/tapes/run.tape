@@ -25,13 +25,13 @@ Show
 
 Type "# run resolves the secrets and execs your command with them injected in memory"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__ | sort'"
 Enter
-Sleep 3s
+Sleep 5s
 Type "# The only artifact on disk is the override — references, never the secret values"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "bat --paging=never tmp/ultra.compose.yml"
 Enter
-Sleep 4s
+Sleep 6s

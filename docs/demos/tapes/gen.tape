@@ -21,16 +21,16 @@ Show
 
 Type "# gen builds the compose override from your Config — offline, no secret store"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "bat --paging=never apps/worker/config/config.go"
 Enter
-Sleep 3s
+Sleep 5s
 Type "ultra gen apps/worker"
 Enter
-Sleep 1500ms
+Sleep 3.5s
 Type "# The override maps each secret to a launcher variable — references only, never a value"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "bat --paging=never tmp/ultra.compose.yml"
 Enter
-Sleep 4s
+Sleep 6s

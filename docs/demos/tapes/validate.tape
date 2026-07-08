@@ -21,19 +21,19 @@ Show
 
 Type "# validate resolves the real secrets and checks the app's Config actually parses"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "export DATABASE_URL=postgres://user:pass@db:5432/app"
 Enter
 Type "export STRIPE_SECRET_KEY=sk_live_abc123"
 Enter
 Type "ultra validate apps/worker --secret-resolver env"
 Enter
-Sleep 2500ms
+Sleep 4.5s
 Type "# Drop a required secret — it fails before the container ever starts"
 Enter
-Sleep 500ms
+Sleep 2.5s
 Type "unset STRIPE_SECRET_KEY"
 Enter
 Type "ultra validate apps/worker --secret-resolver env"
 Enter
-Sleep 4s
+Sleep 6s
