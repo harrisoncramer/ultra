@@ -67,6 +67,24 @@ func NewGenerator(params NewGeneratorParams) *Generator {
 	}
 }
 
+// validEnvName reports whether name is a valid environment variable identifier,
+// matching [A-Za-z_][A-Za-z0-9_]*. A secret whose name isn't can't be forwarded
+// through a compose ${...} launcher variable, which accepts only this grammar.
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r == '_':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // AppOutput is one app's contribution to the combined file: the secret names its
 // Config declares, in sorted order. An app that declares no secrets has no Names
 // and contributes no service block.
@@ -93,10 +111,15 @@ func (g *Generator) Generate(apps []string) (Result, error) {
 	seen := make(map[string]string, len(apps))
 	for _, appPath := range apps {
 		app := g.project.AppName(appPath)
-		if prev, dup := seen[app]; dup {
-			return Result{}, fmt.Errorf("app name %q is used by both %s and %s: their secrets share one namespace and would collide in the compose file", app, prev, appPath)
+		// Key on the sanitized launcher namespace, not the raw name: apps whose
+		// names differ only by characters that normalize to the same segment (e.g.
+		// my-app and my_app both become MY_APP) map onto the same launcher
+		// variables and would silently cross-contaminate each other's secrets.
+		ns := pkgcompose.Namespace(app)
+		if prev, dup := seen[ns]; dup {
+			return Result{}, fmt.Errorf("apps %s and %s map to the same secret namespace %q: their secrets would collide, so rename one so the app names differ after normalization", prev, appPath, ns)
 		}
-		seen[app] = appPath
+		seen[ns] = appPath
 		names, err := g.scanner.SecretNames(g.project.AppConfigDir(appPath))
 		if err != nil {
 			return Result{}, fmt.Errorf("reading %s config: %w", app, err)
@@ -104,6 +127,11 @@ func (g *Generator) Generate(apps []string) (Result, error) {
 		if len(names) == 0 {
 			out = append(out, AppOutput{App: app})
 			continue
+		}
+		for _, name := range names {
+			if !validEnvName(name) {
+				return Result{}, fmt.Errorf("app %s declares secret %q, which is not a valid environment variable name ([A-Za-z_][A-Za-z0-9_]*) and cannot be forwarded through a compose ${...} variable", app, name)
+			}
 		}
 		sort.Strings(names)
 		out = append(out, AppOutput{App: app, Names: names})

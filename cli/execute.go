@@ -20,6 +20,7 @@ import (
 	"github.com/harrisoncramer/ultra/internal/run"
 	"github.com/harrisoncramer/ultra/internal/scan"
 	"github.com/harrisoncramer/ultra/internal/validate"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 
 	"github.com/spf13/cobra"
 )
@@ -252,6 +253,9 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
 		}
+		if err := assertNoAppCollisions(apps, shared.project()); err != nil {
+			return err
+		}
 		cr, err := configResolverFor(shared.root)
 		if err != nil {
 			return err
@@ -313,6 +317,9 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
 		}
+		if err := assertNoAppCollisions(apps, shared.project()); err != nil {
+			return err
+		}
 		cr, err := configResolverFor(shared.root)
 		if err != nil {
 			return err
@@ -342,22 +349,42 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.outputFilename, "output-filename", "ultra.compose.yml", "file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it")
 }
 
-// resolveApps returns the app paths to operate on: the given positional args
-// (each also split on commas), or the apps listed in .ultra.toml when none are
-// passed on the command line.
+// resolveApps returns the app paths to operate on: the given positional args, or
+// the apps listed in .ultra.toml when none are passed on the command line. Both
+// sources are normalized the same way, split on commas and trimmed, with empty
+// entries dropped, so a stray blank or trailing comma in either can't turn into
+// an app path of "" that resolves to a bogus config dir.
 func resolveApps(args []string, fc fileConfig) []string {
-	if len(args) == 0 {
-		return fc.apps
+	src := args
+	if len(src) == 0 {
+		src = fc.apps
 	}
 	var apps []string
-	for _, a := range args {
-		for _, p := range strings.Split(a, ",") {
+	for _, a := range src {
+		for p := range strings.SplitSeq(a, ",") {
 			if p = strings.TrimSpace(p); p != "" {
 				apps = append(apps, p)
 			}
 		}
 	}
 	return apps
+}
+
+// assertNoAppCollisions errors when two of the given app paths map to the same
+// launcher namespace, so their secrets would collide. gen and run enforce this
+// inside the generator; validate and lint handle each app independently and
+// concurrently, so this guard keeps a colliding or repeated app from producing
+// duplicate reports or racing on the shared per-app validation directory.
+func assertNoAppCollisions(apps []string, proj project.Project) error {
+	seen := make(map[string]string, len(apps))
+	for _, appPath := range apps {
+		ns := pkgcompose.Namespace(proj.AppName(appPath))
+		if prev, dup := seen[ns]; dup {
+			return fmt.Errorf("apps %s and %s map to the same secret namespace %q: their secrets would collide, so rename one so the app names differ after normalization", prev, appPath, ns)
+		}
+		seen[ns] = appPath
+	}
+	return nil
 }
 
 // bindSelectedSecretResolver binds the flags of the resolver named by

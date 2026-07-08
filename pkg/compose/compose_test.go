@@ -30,6 +30,33 @@ func TestComposeVar(t *testing.T) {
 	}
 }
 
+type namespaceCase struct {
+	name string
+	app  string
+	want string
+}
+
+func TestNamespace(t *testing.T) {
+	cases := []namespaceCase{
+		{"already an identifier", "worker", "WORKER"},
+		{"hyphen becomes underscore", "my-app", "MY_APP"},
+		{"underscore is preserved", "my_app", "MY_APP"},
+		{"dot becomes underscore", "my.app", "MY_APP"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, compose.Namespace(c.app))
+		})
+	}
+}
+
+// TestNamespaceCollapsesDistinctNames documents that names differing only by
+// characters that normalize to the same segment share one namespace, the
+// collision gen rejects.
+func TestNamespaceCollapsesDistinctNames(t *testing.T) {
+	assert.Equal(t, compose.Namespace("my-app"), compose.Namespace("my_app"))
+}
+
 type composeCollisionCase struct {
 	name    string
 	appA    string
