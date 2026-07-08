@@ -1,0 +1,4 @@
+apps = ["apps/worker"]
+
+[secrets]
+resolver = "env"

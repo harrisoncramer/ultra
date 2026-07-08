@@ -54,6 +54,21 @@ func TestLoadRequiredByEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadMissingRequiredMessage(t *testing.T) {
+	t.Run("no environment omits the environment clause", func(t *testing.T) {
+		_, err := Load(&ScopedConfig{})
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "TS_ALWAYS required but not set")
+		assert.NotContains(t, err.Error(), "for environment")
+	})
+	t.Run("named environment names it in the message", func(t *testing.T) {
+		t.Setenv("TS_ALWAYS", "x")
+		_, err := Load(&ScopedConfig{}, WithEnvironment("production"))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, `for environment "production"`)
+	})
+}
+
 type rejectEnvTagCase struct {
 	name         string
 	load         func() error

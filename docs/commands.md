@@ -4,6 +4,8 @@ This page explains what each command is for and when to reach for it. For the ex
 
 ## gen: generating the compose file
 
+![ultra gen](assets/demos/gen.gif)
+
 The generated compose file is references only: it maps each declared secret name onto its launcher variable and never contains a value. All the named apps go into one file, one service block per app, written to `--output-dir/--output-filename` (by default `tmp/ultra.compose.yml`). Generating it is a static operation over each app's `Config` and needs no secret store, so `ultra run` regenerates it on every launch. To produce it without launching, for CI, a setup step, or to commit it into version control, use `ultra gen`:
 
 ```bash
@@ -23,6 +25,8 @@ ultra gen --compose-file docker-compose.sandbox.yml  --output-filename sandbox.c
 
 ## run
 
+![ultra run](assets/demos/run.gif)
+
 `run` resolves each app's secrets via the selected secret resolver, forwards them into that app's container through a generated compose override, and execs the given command. No secret is written to disk.
 
 ```bash
@@ -31,6 +35,8 @@ ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker comp
 
 ## validate: validating configuration
 
+![ultra validate](assets/demos/validate.gif)
+
 Ultra supports validating a configuration prior to starting a container. This is helpful in CI, or during local development. The `ultra validate` takes the same secret resolver and flags as `run` and checks that every app's `config.Load` succeeds. It exits non-zero if any app is missing a required value or won't parse.
 
 ```bash
@@ -38,6 +44,8 @@ ultra validate apps/server apps/worker --secret-resolver aws-secret-manager --re
 ```
 
 ## lint: linting configuration
+
+![ultra lint](assets/demos/lint.gif)
 
 The `ultra validate` needs real secret values, because it reconstructs the environment and parses it, so it must run somewhere the secret store is reachable.
 

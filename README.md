@@ -22,6 +22,10 @@ With ultra, you can inject, parse, and validate secrets and configuration for ea
 
 NOTE: This project is still under development. Expect breaking changes!
 
+<p align="center">
+  <img src="docs/assets/demos/demo.gif" alt="ultra demo" />
+</p>
+
 ## Quickstart
 
 1. Install the CLI:

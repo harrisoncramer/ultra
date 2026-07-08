@@ -1,5 +1,11 @@
 #!/bin/bash
 set -euo pipefail
-#MISE description="Regenerate the command reference under docs/reference"
+#MISE description="Regenerate the command reference under docs/reference; pass --demos to also re-render the CLI demo gifs"
 
 go run ./cmd/gen-docs docs/reference
+
+for arg in "$@"; do
+	if [[ "$arg" == "--demos" ]]; then
+		docs/demos/generate.sh
+	fi
+done
