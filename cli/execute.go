@@ -1,3 +1,8 @@
+// Package cli builds ultra's command tree and wires the domain services
+// together. It is the composition root: each command constructs the scanner,
+// composer and resolvers once and injects them into the run, validate and lint
+// services. Consumers extend ultra by registering their own resolvers (see
+// resolvers.go) and calling Execute from their own main.
 package cli
 
 import (
@@ -6,11 +11,19 @@ import (
 	"os"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
+	"github.com/harrisoncramer/ultra/internal/lint"
+	"github.com/harrisoncramer/ultra/internal/project"
+	"github.com/harrisoncramer/ultra/internal/resolve"
+	"github.com/harrisoncramer/ultra/internal/run"
+	"github.com/harrisoncramer/ultra/internal/scan"
+	"github.com/harrisoncramer/ultra/internal/validate"
+
 	"github.com/spf13/cobra"
 )
 
-// Execute builds the ultra command tree — root, run, validate — and runs it.
-// Flags default to any values set in the ultra config file (.ultra.toml under
+// Execute builds the ultra command tree — root, run, validate, lint — and runs
+// it. Flags default to any values set in the ultra config file (.ultra.toml under
 // --root, or the path given by --config-file); the command line overrides them.
 func Execute() error {
 	fc, err := loadConfig()
@@ -26,6 +39,10 @@ type sharedFlags struct {
 	configDir   string
 	configFile  string
 	overrideDir string
+}
+
+func (s *sharedFlags) project() project.Project {
+	return project.Project{Root: s.root, ConfigDir: s.configDir}
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -57,7 +74,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
-	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
+	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+resolve.SecretResolverNames())
 	cmd.Flags().StringVar(&composeFile, "compose-file", "docker-compose.yml", "base docker compose file COMPOSE_FILE points at, relative to --root")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
@@ -66,7 +83,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		if resolverFor == nil {
-			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
+			return fmt.Errorf("--secret-resolver must be one of: %s", resolve.SecretResolverNames())
 		}
 		dash := cmd.ArgsLenAtDash()
 		if dash < 0 || dash >= len(args) {
@@ -76,14 +93,17 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths before -- or set apps in .ultra.toml")
 		}
-		return run(cmd.Context(), runParams{
-			root:        shared.root,
-			apps:        apps,
-			configDir:   shared.configDir,
-			overrideDir: shared.overrideDir,
-			composeFile: composeFile,
-			resolverFor: layerSecretResolver(resolverFor, buildSecretOverride(fc)),
-			command:     args[dash:],
+		runner := run.NewRunner(run.NewRunnerParams{
+			Scanner:     scan.NewScanner(),
+			Composer:    compose.NewComposer(),
+			Project:     shared.project(),
+			OverrideDir: shared.overrideDir,
+			ComposeFile: composeFile,
+		})
+		return runner.Run(cmd.Context(), run.Params{
+			Apps:        apps,
+			ResolverFor: resolve.LayerSecretResolver(resolverFor, fc.secretOverride()),
+			Command:     args[dash:],
 		})
 	}
 	return cmd
@@ -106,8 +126,8 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
-	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
-	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
+	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+resolve.SecretResolverNames())
+	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+resolve.ConfigResolverNames())
 	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
 	cmd.Flags().BoolVar(&rejectUnreferenced, "reject-unreferenced", false, "fail an app when a resolver provides a key no Config field references")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
@@ -118,10 +138,10 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		if resolverFor == nil {
-			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
+			return fmt.Errorf("--secret-resolver must be one of: %s", resolve.SecretResolverNames())
 		}
 		if configResolverFor == nil {
-			return fmt.Errorf("--config-resolver must be one of: %s", configResolverNames())
+			return fmt.Errorf("--config-resolver must be one of: %s", resolve.ConfigResolverNames())
 		}
 		apps := resolveApps(args, fc)
 		if len(apps) == 0 {
@@ -131,19 +151,19 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		overrideCR, err := buildConfigOverride(fc, shared.root)
+		overrideCR, err := fc.configOverride(shared.root)
 		if err != nil {
 			return err
 		}
-		return validate(cmd.Context(), validateParams{
-			root:               shared.root,
-			apps:               apps,
-			configDir:          shared.configDir,
-			environment:        environment,
-			rejectUnreferenced: rejectUnreferenced,
-			secretResolver:     layerSecretResolver(resolverFor, buildSecretOverride(fc)),
-			configResolver:     layerConfigResolver(cr, overrideCR),
+		validator := validate.NewValidator(validate.NewValidatorParams{
+			Scanner:            scan.NewScanner(),
+			Project:            shared.project(),
+			Environment:        environment,
+			RejectUnreferenced: rejectUnreferenced,
+			SecretResolver:     resolve.LayerSecretResolver(resolverFor, fc.secretOverride()),
+			ConfigResolver:     resolve.LayerConfigResolver(cr, overrideCR),
 		})
+		return validator.Validate(cmd.Context(), apps)
 	}
 	return cmd
 }
@@ -167,8 +187,8 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
-	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+secretResolverNames())
-	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+configResolverNames())
+	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+resolve.SecretResolverNames())
+	cmd.Flags().StringVar(&configResolver, "config-resolver", "docker-compose", "non-secret config source: "+resolve.ConfigResolverNames())
 	cmd.Flags().StringVar(&environment, "env", "", "environment to check for; a field's required tag decides whether it's required in it")
 	cmd.Flags().BoolVar(&rejectUnreferenced, "reject-unreferenced", false, "fail an app when a resolver provides a key no Config field references")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
@@ -179,10 +199,10 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 			return err
 		}
 		if resolverFor == nil {
-			return fmt.Errorf("--secret-resolver must be one of: %s", secretResolverNames())
+			return fmt.Errorf("--secret-resolver must be one of: %s", resolve.SecretResolverNames())
 		}
 		if configResolverFor == nil {
-			return fmt.Errorf("--config-resolver must be one of: %s", configResolverNames())
+			return fmt.Errorf("--config-resolver must be one of: %s", resolve.ConfigResolverNames())
 		}
 		apps := resolveApps(args, fc)
 		if len(apps) == 0 {
@@ -192,19 +212,19 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		overrideCR, err := buildConfigOverride(fc, shared.root)
+		overrideCR, err := fc.configOverride(shared.root)
 		if err != nil {
 			return err
 		}
-		return lint(cmd.Context(), lintParams{
-			root:               shared.root,
-			apps:               apps,
-			configDir:          shared.configDir,
-			environment:        environment,
-			rejectUnreferenced: rejectUnreferenced,
-			secretResolver:     layerSecretResolver(resolverFor, buildSecretOverride(fc)),
-			configResolver:     layerConfigResolver(cr, overrideCR),
+		linter := lint.NewLinter(lint.NewLinterParams{
+			Scanner:            scan.NewScanner(),
+			Project:            shared.project(),
+			Environment:        environment,
+			RejectUnreferenced: rejectUnreferenced,
+			SecretResolver:     resolve.LayerSecretResolver(resolverFor, fc.secretOverride()),
+			ConfigResolver:     resolve.LayerConfigResolver(cr, overrideCR),
 		})
+		return linter.Lint(cmd.Context(), apps)
 	}
 	return cmd
 }
@@ -239,12 +259,9 @@ func resolveApps(args []string, fc fileConfig) []string {
 // prefixing, no collisions between resolvers — and returns its factory. The name
 // comes from the command line or, failing that, .ultra.toml, since the resolver's
 // flags must be bound before cobra parses.
-func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app string) SecretResolver {
-	name := fc.effective("secret-resolver")
-	for _, rc := range secretResolvers {
-		if rc.Name == name {
-			return rc.Setup(cmd.Flags())
-		}
+func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app string) resolve.SecretResolver {
+	if rc, ok := resolve.FindSecretResolver(fc.effective("secret-resolver")); ok {
+		return rc.Setup(cmd.Flags())
 	}
 	return nil
 }
@@ -252,14 +269,13 @@ func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app stri
 // bindSelectedConfigResolver binds the flags of the resolver named by
 // --config-resolver onto cmd and returns its factory, mirroring
 // bindSelectedSecretResolver. The name comes from the command line or
-// .ultra.toml, falling back to the default docker-compose resolver, since the
-// resolver's flags must be bound before cobra parses.
-func bindSelectedConfigResolver(cmd *cobra.Command, fc fileConfig) func(root string) (ConfigResolver, error) {
+// .ultra.toml, falling back to the default docker-compose resolver.
+func bindSelectedConfigResolver(cmd *cobra.Command, fc fileConfig) func(root string) (resolve.ConfigResolver, error) {
 	name := fc.effective("config-resolver")
 	if name == "" {
 		name = "docker-compose"
 	}
-	if rc, ok := findConfigResolver(name); ok {
+	if rc, ok := resolve.FindConfigResolver(name); ok {
 		return rc.Setup(cmd.Flags())
 	}
 	return nil
@@ -278,12 +294,4 @@ func rawFlagValue(args []string, name string) string {
 		}
 	}
 	return ""
-}
-
-func secretResolverNames() string {
-	names := make([]string, len(secretResolvers))
-	for i, rc := range secretResolvers {
-		names[i] = rc.Name
-	}
-	return strings.Join(names, ", ")
 }

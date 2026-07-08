@@ -1,4 +1,4 @@
-package cli
+package resolve
 
 import (
 	"bytes"
@@ -53,6 +53,25 @@ func init() {
 	})
 }
 
+// FindConfigResolver returns the config resolver command registered under name.
+func FindConfigResolver(name string) (ConfigResolverCommand, bool) {
+	for _, rc := range configResolvers {
+		if rc.Name == name {
+			return rc, true
+		}
+	}
+	return ConfigResolverCommand{}, false
+}
+
+// ConfigResolverNames lists the registered config resolver names for help text.
+func ConfigResolverNames() string {
+	names := make([]string, len(configResolvers))
+	for i, rc := range configResolvers {
+		names[i] = rc.Name
+	}
+	return strings.Join(names, ", ")
+}
+
 // layeredConfigResolver queries base then layers override on top, so an override
 // value wins over the base for the same key. A nil override is a no-op.
 type layeredConfigResolver struct {
@@ -60,6 +79,7 @@ type layeredConfigResolver struct {
 	override ConfigResolver
 }
 
+// Resolve returns the base values with the override's merged on top.
 func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[string]string, error) {
 	out, err := l.base.Resolve(ctx, app)
 	if err != nil {
@@ -72,58 +92,33 @@ func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("config override resolver: %w", err)
 	}
-	if out == nil {
-		out = make(map[string]string, len(ov))
-	}
-	for k, v := range ov {
-		out[k] = v
-	}
-	return out, nil
+	return mergeOver(out, ov), nil
 }
 
-// layerConfigResolver wraps base so the override's values win, or returns base
+// LayerConfigResolver wraps base so the override's values win, or returns base
 // unchanged when no override is configured.
-func layerConfigResolver(base, override ConfigResolver) ConfigResolver {
+func LayerConfigResolver(base, override ConfigResolver) ConfigResolver {
 	if override == nil {
 		return base
 	}
 	return layeredConfigResolver{base: base, override: override}
 }
 
-// buildConfigOverride builds the override config resolver named by the
-// [config-override] section for root, or returns nil when none is configured. Its
-// flags come only from the file, bound on a private flag set.
-func buildConfigOverride(fc fileConfig, root string) (ConfigResolver, error) {
-	name := fc.override.configResolver
+// BuildConfigOverride builds the override config resolver named by name for root,
+// or returns nil when name is empty. Its flags come from flags, bound on a
+// private flag set.
+func BuildConfigOverride(name string, flags map[string]string, root string) (ConfigResolver, error) {
 	if name == "" {
 		return nil, nil
 	}
-	rc, ok := findConfigResolver(name)
+	rc, ok := FindConfigResolver(name)
 	if !ok {
 		return nil, fmt.Errorf("config-override resolver %q is not registered", name)
 	}
 	fs := pflag.NewFlagSet("config-override", pflag.ContinueOnError)
 	build := rc.Setup(fs)
-	applyFlagSet(fs, fc.override.configFlags)
+	applyFlagSet(fs, flags)
 	return build(root)
-}
-
-// findConfigResolver returns the config resolver command registered under name.
-func findConfigResolver(name string) (ConfigResolverCommand, bool) {
-	for _, rc := range configResolvers {
-		if rc.Name == name {
-			return rc, true
-		}
-	}
-	return ConfigResolverCommand{}, false
-}
-
-func configResolverNames() string {
-	names := make([]string, len(configResolvers))
-	for i, rc := range configResolvers {
-		names[i] = rc.Name
-	}
-	return strings.Join(names, ", ")
 }
 
 // dockerComposeConfig reads apps' non-secret environment from a docker-compose
@@ -136,6 +131,8 @@ type dockerComposeConfig struct {
 	err      error
 }
 
+// Resolve returns app's non-secret environment from the compose file, loading
+// and caching the file on first use.
 func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
 	d.once.Do(func() { d.services, d.err = d.load(ctx) })
 	if d.err != nil {
@@ -144,6 +141,8 @@ func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[stri
 	return d.services[app], nil
 }
 
+// load runs `docker compose config` once and returns each service's non-secret
+// environment keyed by service name.
 func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]string, error) {
 	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", d.composeFile, "config", "--format", "json")
 	var stdout, stderr bytes.Buffer
@@ -183,6 +182,7 @@ func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]s
 // or pod) already holds them, and validate starts from the process env anyway.
 type envConfig struct{}
 
+// Resolve returns no values: the environment already holds the non-secret config.
 func (envConfig) Resolve(_ context.Context, _ string) (map[string]string, error) {
 	return map[string]string{}, nil
 }

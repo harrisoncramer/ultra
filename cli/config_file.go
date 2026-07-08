@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/harrisoncramer/ultra/internal/resolve"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -62,6 +64,18 @@ type overrideConfig struct {
 	secretFlags    map[string]string
 	configResolver string
 	configFlags    map[string]string
+}
+
+// secretOverride builds the override secret resolver factory the file configures,
+// or nil when none is set.
+func (fc fileConfig) secretOverride() func(app string) resolve.SecretResolver {
+	return resolve.BuildSecretOverride(fc.override.secretResolver, fc.override.secretFlags)
+}
+
+// configOverride builds the override config resolver the file configures for
+// root, or nil when none is set.
+func (fc fileConfig) configOverride(root string) (resolve.ConfigResolver, error) {
+	return resolve.BuildConfigOverride(fc.override.configResolver, fc.override.configFlags, root)
 }
 
 // loadConfig reads the ultra config file and flattens its sections into flag
