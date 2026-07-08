@@ -1,0 +1,8 @@
+services:
+  worker:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+      IT_API_KEY: sk_live_LEAKED
+      IT_DB_URL: ${IT_DB_URL}
+    command: ["sh", "-c", "true"]
