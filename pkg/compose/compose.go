@@ -15,6 +15,14 @@ type AppSecrets struct {
 	Names []string
 }
 
+// Namespace is the sanitized app segment of an app's launcher variables, the
+// part shared by every ComposeVar for that app. Two apps with the same
+// Namespace forward their secrets through the same launcher variables and would
+// collide, even when their raw names (and compose service names) differ.
+func Namespace(app string) string {
+	return sanitizeApp(app)
+}
+
 // ComposeVar is the app-namespaced launcher variable a secret is passed through
 // to reach its container. Namespacing by app keeps the same env name declared by
 // two different apps (e.g. DATABASE_URL) from colliding in the shared launcher

@@ -54,6 +54,12 @@ func Fields(dir string) ([]Field, error) {
 		}
 		visited[s] = true
 		for i := 0; i < s.NumFields(); i++ {
+			// env.Parse skips fields it can't set, so an unexported field is never
+			// populated at runtime; treat it as not declared here too, rather than
+			// forwarding a secret the app can never read.
+			if !s.Field(i).Exported() {
+				continue
+			}
 			tag := reflect.StructTag(s.Tag(i))
 			// A field's required environments are its own required tag, or those
 			// inherited from the struct it lives in. An embedded or nested struct

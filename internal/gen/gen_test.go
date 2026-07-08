@@ -87,6 +87,54 @@ func TestGeneratePreservesInputOrder(t *testing.T) {
 	assert.Equal(t, []string{"one", "two", "three"}, got)
 }
 
+func TestGenerateRejectsCollidingAppNames(t *testing.T) {
+	cases := []struct {
+		name string
+		apps []string
+		want string
+	}{
+		{"same path twice", []string{"apps/worker", "apps/worker"}, "worker"},
+		{"different paths, same basename", []string{"apps/worker", "svc/worker"}, "worker"},
+		// Distinct compose service names, but both normalize to the MY_APP launcher
+		// namespace, so their secrets would cross-contaminate.
+		{"names colliding only after normalization", []string{"apps/my-app", "apps/my_app"}, "MY_APP"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			_, err := newTestGenerator(root, []string{"A"}).Generate(c.apps)
+			require.Error(t, err, "colliding app namespaces must not silently produce a broken or cross-contaminating file")
+			assert.Contains(t, err.Error(), c.want)
+
+			_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.yml"))
+			assert.ErrorIs(t, statErr, os.ErrNotExist, "no file is written when app namespaces collide")
+		})
+	}
+}
+
+func TestGenerateRejectsInvalidEnvName(t *testing.T) {
+	cases := []struct {
+		name  string
+		names []string
+	}{
+		{"dash", []string{"MY-KEY"}},
+		{"dot", []string{"my.key"}},
+		{"leading digit", []string{"1KEY"}},
+		{"space", []string{"MY KEY"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			_, err := newTestGenerator(root, c.names).Generate([]string{"app"})
+			require.Error(t, err, "an env name that breaks compose ${...} interpolation must be rejected")
+			assert.Contains(t, err.Error(), c.names[0])
+
+			_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.yml"))
+			assert.ErrorIs(t, statErr, os.ErrNotExist, "no file is written when a name is invalid")
+		})
+	}
+}
+
 func TestGenerateHonorsOutputDir(t *testing.T) {
 	root := t.TempDir()
 	g := NewGenerator(NewGeneratorParams{

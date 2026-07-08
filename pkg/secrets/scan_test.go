@@ -38,6 +38,7 @@ func TestSecretNames(t *testing.T) {
 		{name: "flat", fixture: "flat", want: []string{"SECRET_TOKEN"}},
 		{name: "embedded and nested", fixture: "composed", want: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"}},
 		{name: "cross-package sub-struct", fixture: "crosspkg", want: []string{"LOCAL_TOKEN", "SUB_TOKEN"}},
+		{name: "unexported field is skipped like env.Parse", fixture: "unexported", want: []string{"PUBLIC_TOKEN"}},
 		{name: "no exported Config struct errors", fixture: "noconfig", wantErr: true},
 	}
 	for _, c := range cases {

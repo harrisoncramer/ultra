@@ -29,6 +29,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
 	t.Run("validate enforces env-scoped required", r.validateEnvScopedRequired)
 	t.Run("lint flags a hardcoded secret", r.lintFlagsHardcodedSecret)
+	t.Run("validate flags a hardcoded secret", r.validateFlagsHardcodedSecret)
 	t.Run("run injects a value with special characters verbatim", r.runInjectsSpecialCharValue)
 	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
 	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
@@ -211,6 +212,33 @@ func (r *Rig) lintFlagsHardcodedSecret(t *testing.T) {
 	leak := r.ultra(t, append(args, "--compose-file", "docker-compose.leak.yml")...)
 	if leak.ok() {
 		t.Fatalf("lint should fail on a hardcoded secret:\n%s", leak.output)
+	}
+	if !strings.Contains(leak.output, "hardcoded") || !strings.Contains(leak.output, "IT_API_KEY") {
+		t.Errorf("expected a hardcoded IT_API_KEY finding:\n%s", leak.output)
+	}
+	if strings.Contains(leak.output, "IT_DB_URL") {
+		t.Errorf("a ${...} forward must not be flagged:\n%s", leak.output)
+	}
+}
+
+func (r *Rig) validateFlagsHardcodedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"validate", "apps/worker", "--root", f.root}, s.addrFlags()...)
+
+	// The clean compose file hardcodes no secret, so validate passes.
+	if clean := r.ultra(t, args...); !clean.ok() {
+		t.Fatalf("validate should pass on the clean compose file:\n%s", clean.output)
+	}
+
+	// The leak file pastes IT_API_KEY as a literal, so validate must fail the same
+	// way lint does; a ${...} forward (IT_DB_URL) is not a hardcoded value.
+	leak := r.ultra(t, append(args, "--compose-file", "docker-compose.leak.yml")...)
+	if leak.ok() {
+		t.Fatalf("validate should fail on a hardcoded secret:\n%s", leak.output)
 	}
 	if !strings.Contains(leak.output, "hardcoded") || !strings.Contains(leak.output, "IT_API_KEY") {
 		t.Errorf("expected a hardcoded IT_API_KEY finding:\n%s", leak.output)

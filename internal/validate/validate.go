@@ -6,6 +6,7 @@ package validate
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -144,6 +145,21 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 		}
 	}
 
+	// A secret whose value is hardcoded in the non-secret config is a leak: the
+	// same name is claimed by both the secret store and the committed config, and
+	// the value belongs only in the store. lint reports this; fail it here too so
+	// validate on its own still catches it.
+	if lc, ok := v.configResolver.(resolve.SecretLeakChecker); ok && len(names) > 0 {
+		leaked, err := lc.LeakedSecrets(ctx, app, names)
+		if err != nil {
+			return err
+		}
+		if len(leaked) > 0 {
+			sort.Strings(leaked)
+			return fmt.Errorf("secrets hardcoded in non-secret config: %s", strings.Join(leaked, ", "))
+		}
+	}
+
 	// With rejectUnreferenced, a resolver handing back a key no Config field reads
 	// is a config drift, a stale compose var or a vault entry nothing consumes,
 	// so fail rather than silently ignoring it.
@@ -157,8 +173,15 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	}
 
 	// The generated program lives inside the app's module so it can import the
-	// config package; it is removed once validation finishes.
+	// config package; it is removed once validation finishes. Refuse to touch a
+	// pre-existing path so the cleanup below only ever deletes a directory ultra
+	// itself created, never a user's.
 	genDir := filepath.Join(filepath.Dir(dir), "ultravalidate")
+	if _, statErr := os.Stat(genDir); statErr == nil {
+		return fmt.Errorf("refusing to generate the validation program: %s already exists; remove or rename it and retry", genDir)
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("checking validation dir %s: %w", genDir, statErr)
+	}
 	if err := writeValidateMain(genDir, importPath, v.environment); err != nil {
 		return err
 	}

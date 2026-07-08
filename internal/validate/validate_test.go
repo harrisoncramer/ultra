@@ -2,6 +2,8 @@ package validate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/harrisoncramer/ultra/internal/project"
@@ -27,6 +29,21 @@ type configMapResolver struct{ have map[string]string }
 
 func (c configMapResolver) Resolve(context.Context, string) (map[string]string, error) {
 	return c.have, nil
+}
+
+// leakConfigResolver is a config resolver that also reports hardcoded secrets,
+// standing in for docker-compose's SecretLeakChecker capability.
+type leakConfigResolver struct {
+	have   map[string]string
+	leaked []string
+}
+
+func (c leakConfigResolver) Resolve(context.Context, string) (map[string]string, error) {
+	return c.have, nil
+}
+
+func (c leakConfigResolver) LeakedSecrets(context.Context, string, []string) ([]string, error) {
+	return c.leaked, nil
 }
 
 // flat declares only PLAIN (non-secret) and SECRET_TOKEN (secret).
@@ -75,6 +92,68 @@ func TestValidateRejectsUnreferenced(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRejectsHardcodedSecret(t *testing.T) {
+	cases := []struct {
+		name    string
+		leaked  []string
+		wantErr bool
+		want    string
+	}{
+		{name: "hardcoded secret fails the app", leaked: []string{"SECRET_TOKEN"}, wantErr: true, want: "SECRET_TOKEN"},
+		{name: "no leak passes the leak check", leaked: nil, wantErr: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			v := NewValidator(NewValidatorParams{
+				Scanner:        fakeScanner{fields: flatFields},
+				Project:        project.Project{},
+				SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
+				ConfigResolver: leakConfigResolver{leaked: c.leaked},
+			})
+			err := v.validateApp(context.Background(), "flat")
+			if !c.wantErr {
+				// With no leak the leak check passes; the app then builds and runs a
+				// program against a bogus import path, so any remaining error must not
+				// be the hardcoded-secret one.
+				if err != nil {
+					assert.NotContains(t, err.Error(), "hardcoded")
+				}
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "hardcoded")
+			assert.ErrorContains(t, err, c.want)
+		})
+	}
+}
+
+func TestValidateRefusesToClobberExistingDir(t *testing.T) {
+	root := t.TempDir()
+	// The app parent already holds an ultravalidate directory with user content;
+	// validate must not touch, let alone delete, it.
+	genDir := filepath.Join(root, "app", "ultravalidate")
+	require.NoError(t, os.MkdirAll(genDir, 0o755))
+	sentinel := filepath.Join(genDir, "important.txt")
+	require.NoError(t, os.WriteFile(sentinel, []byte("precious"), 0o644))
+
+	v := NewValidator(NewValidatorParams{
+		// No secrets, so the store is never hit and validateApp reaches the dir
+		// check without a resolver.
+		Scanner:        fakeScanner{fields: []scan.Field{{Name: "PLAIN"}}},
+		Project:        project.Project{Root: root},
+		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{} },
+		ConfigResolver: configMapResolver{have: map[string]string{}},
+	})
+
+	err := v.validateApp(context.Background(), "app")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "already exists")
+
+	data, readErr := os.ReadFile(sentinel)
+	require.NoError(t, readErr, "the pre-existing directory must be left intact")
+	assert.Equal(t, "precious", string(data))
 }
 
 type redactCase struct {
