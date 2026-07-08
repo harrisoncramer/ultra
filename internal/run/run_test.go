@@ -7,11 +7,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newTestRunner builds a Runner backed by a real generator over the fake scanner
+// and composer, so tests exercise the actual override generation.
+func newTestRunner(root, overrideDir, composeFile string, names []string) *Runner {
+	proj := project.Project{Root: root, ConfigDir: "config"}
+	return NewRunner(NewRunnerParams{
+		Generator: gen.NewGenerator(gen.NewGeneratorParams{
+			Scanner:     fakeScanner{names: names},
+			Composer:    fakeComposer{},
+			Project:     proj,
+			OverrideDir: overrideDir,
+		}),
+		Composer:    fakeComposer{},
+		Project:     proj,
+		ComposeFile: composeFile,
+	})
+}
 
 // fakeScanner reports a fixed set of secret names for any config dir.
 type fakeScanner struct{ names []string }
@@ -72,20 +90,20 @@ type prepareCase struct {
 func TestPrepare(t *testing.T) {
 	cases := []prepareCase{
 		{
-			name:             "omits unresolved secrets from the override and env",
+			name:             "override lists every declared secret; env carries only resolved ones",
 			names:            []string{"RESOLVED", "MISSING"},
 			resolved:         map[string]string{"RESOLVED": "value"},
 			wantOverride:     true,
-			wantContains:     []string{"RESOLVED:"},
-			wantAbsent:       []string{"MISSING:"},
+			wantContains:     []string{"RESOLVED:", "MISSING:"},
 			wantEnv:          map[string]string{"ULTRA_APP__RESOLVED": "value"},
 			wantEnvAbsentPfx: []string{"ULTRA_APP__MISSING="},
 		},
 		{
-			name:         "writes no override when nothing resolves",
+			name:         "writes an override for declared secrets even when none resolve",
 			names:        []string{"MISSING"},
 			resolved:     map[string]string{},
-			wantOverride: false,
+			wantOverride: true,
+			wantContains: []string{"MISSING:"},
 		},
 		{
 			name:         "honors a configured override dir",
@@ -98,13 +116,7 @@ func TestPrepare(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
-			runner := NewRunner(NewRunnerParams{
-				Scanner:     fakeScanner{names: c.names},
-				Composer:    fakeComposer{},
-				Project:     project.Project{Root: root, ConfigDir: "config"},
-				OverrideDir: c.overrideDir,
-				ComposeFile: c.composeFile,
-			})
+			runner := newTestRunner(root, c.overrideDir, c.composeFile, c.names)
 
 			prep, err := runner.prepare(context.Background(), Params{
 				Apps:        []string{"app"},
@@ -146,12 +158,7 @@ func TestPrepare(t *testing.T) {
 
 func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 	root := t.TempDir()
-	runner := NewRunner(NewRunnerParams{
-		Scanner:     fakeScanner{names: []string{"RESOLVED"}},
-		Composer:    fakeComposer{},
-		Project:     project.Project{Root: root, ConfigDir: "config"},
-		ComposeFile: "docker-compose.lake.yml",
-	})
+	runner := newTestRunner(root, "", "docker-compose.lake.yml", []string{"RESOLVED"})
 	prep, err := runner.prepare(context.Background(), Params{
 		Apps:        []string{"app"},
 		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
@@ -163,11 +170,7 @@ func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 
 func TestRunKeepsOverrideAfterExit(t *testing.T) {
 	root := t.TempDir()
-	runner := NewRunner(NewRunnerParams{
-		Scanner:  fakeScanner{names: []string{"RESOLVED"}},
-		Composer: fakeComposer{},
-		Project:  project.Project{Root: root, ConfigDir: "config"},
-	})
+	runner := newTestRunner(root, "", "", []string{"RESOLVED"})
 	err := runner.Run(context.Background(), Params{
 		Apps:        []string{"app"},
 		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
