@@ -268,6 +268,8 @@ Both commands take `--reject-unreferenced`, which tightens the check: on top of 
 ultra lint apps/server --secret-resolver aws-secret-manager --region us-east-1 --reject-unreferenced
 ```
 
+`lint` also fails when a `secret`-tagged field has its value hardcoded in the non-secret config, since secrets belong in the store, not committed config. When the config resolver is `docker-compose`, it reads the file without interpolation, so an entry that forwards a variable (`API_KEY: ${API_KEY}`) is treated as a reference and passes, while a pasted literal (`API_KEY: sk_live_...`) is flagged. Config sources that can't hold a literal, such as the `env` resolver, are not checked.
+
 ### Config resolvers
 
 The `--config-resolver` is used by the `ultra validate` and `ultra lint` commands. It tells them where the non-secret values live: `validate` uses it to rebuild the boot environment, and `lint` uses it to learn which non-secret keys the platform will provide. Pick one with `--config-resolver` (default `docker-compose`):

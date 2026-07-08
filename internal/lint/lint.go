@@ -60,16 +60,19 @@ func NewLinter(params NewLinterParams) *Linter {
 }
 
 // findings is what checkApp reports for one app: the required keys no resolver
-// provides, and — when rejectUnreferenced is set — the keys a resolver provides
-// that no Config field references.
+// provides, the secrets found hardcoded in the non-secret config, and — when
+// rejectUnreferenced is set — the keys a resolver provides that no Config field
+// references.
 type findings struct {
 	missing []string
+	leaked  []string
 	extra   []string
 }
 
 // Lint checks that every required key each app declares will be provided, and
-// reports each app. It returns an error if any app is missing a required key or
-// (with rejectUnreferenced) is handed an unreferenced one.
+// reports each app. It returns an error if any app is missing a required key,
+// has a secret hardcoded in its non-secret config, or (with rejectUnreferenced)
+// is handed an unreferenced one.
 func (l *Linter) Lint(ctx context.Context, apps []string) error {
 	// Check every app concurrently; each app's resolver round-trips are
 	// independent. Lint reports all apps even when some fail, so goroutines never
@@ -99,11 +102,14 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 		case err != nil:
 			failed++
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, err)
-		case len(found.missing) > 0 || len(found.extra) > 0:
+		case len(found.missing) > 0 || len(found.leaked) > 0 || len(found.extra) > 0:
 			failed++
 			var problems []string
 			if len(found.missing) > 0 {
 				problems = append(problems, "missing required keys: "+strings.Join(found.missing, ", "))
+			}
+			if len(found.leaked) > 0 {
+				problems = append(problems, "secrets hardcoded in non-secret config: "+strings.Join(found.leaked, ", "))
 			}
 			if len(found.extra) > 0 {
 				problems = append(problems, "unreferenced keys provided: "+strings.Join(found.extra, ", "))
@@ -120,10 +126,11 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 }
 
 // checkApp reports the required keys app declares that neither resolver provides,
-// and — when rejectUnreferenced is set — the keys a resolver provides that no
-// Config field references. Secret fields are checked against the secret
-// resolver's keys and non-secret fields against the config resolver's; the
-// resolved values themselves are ignored, only the presence of each key matters.
+// the secrets whose value is hardcoded in the non-secret config, and — when
+// rejectUnreferenced is set — the keys a resolver provides that no Config field
+// references. Secret fields are checked against the secret resolver's keys and
+// non-secret fields against the config resolver's; the resolved values
+// themselves are ignored, only the presence of each key matters.
 func (l *Linter) checkApp(ctx context.Context, appPath string) (findings, error) {
 	app := l.project.AppName(appPath)
 	fields, err := l.scanner.Fields(l.project.AppConfigDir(appPath))
@@ -166,11 +173,23 @@ func (l *Linter) checkApp(ctx context.Context, appPath string) (findings, error)
 	}
 	sort.Strings(missing)
 
+	// A secret whose value lives in the non-secret config is a leak: secrets are
+	// meant to come from the store, not committed config. Only resolvers that can
+	// tell a literal from a forwarded reference (docker-compose) report these.
+	var leaked []string
+	if lc, ok := l.configResolver.(resolve.SecretLeakChecker); ok && len(secretNames) > 0 {
+		leaked, err = lc.LeakedSecrets(ctx, app, secretNames)
+		if err != nil {
+			return findings{}, err
+		}
+		sort.Strings(leaked)
+	}
+
 	var extra []string
 	if l.rejectUnreferenced {
 		declared := scan.DeclaredNames(fields)
 		extra = append(scan.Unreferenced(secretVals, declared), scan.Unreferenced(configVals, declared)...)
 		sort.Strings(extra)
 	}
-	return findings{missing: missing, extra: extra}, nil
+	return findings{missing: missing, leaked: leaked, extra: extra}, nil
 }

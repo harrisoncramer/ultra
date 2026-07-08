@@ -57,6 +57,59 @@ func TestLayeredConfigResolverOverrideWins(t *testing.T) {
 	assert.Equal(t, map[string]string{"X": "base", "Y": "override"}, got)
 }
 
+func TestLiteralLeaks(t *testing.T) {
+	env := map[string]string{
+		"HARDCODED":  "sk_live_abc123",
+		"FORWARDED":  "${DATABASE_URL}",
+		"PARTIAL":    "prefix-${TOKEN}",
+		"EMPTY":      "",
+		"NON_SECRET": "info",
+	}
+	got := literalLeaks(env, []string{"HARDCODED", "FORWARDED", "PARTIAL", "EMPTY", "ABSENT"})
+	assert.Equal(t, []string{"HARDCODED"}, got)
+}
+
+// leakyConfigResolver is a config resolver that also reports a fixed set of
+// hardcoded secret names, exercising the SecretLeakChecker path.
+type leakyConfigResolver struct {
+	configMapResolver
+	hardcoded []string
+}
+
+func (l leakyConfigResolver) LeakedSecrets(_ context.Context, _ string, names []string) ([]string, error) {
+	want := make(map[string]bool, len(l.hardcoded))
+	for _, n := range l.hardcoded {
+		want[n] = true
+	}
+	var out []string
+	for _, n := range names {
+		if want[n] {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+func TestLayeredConfigResolverLeakedSecretsUnion(t *testing.T) {
+	l := layeredConfigResolver{
+		base:     leakyConfigResolver{hardcoded: []string{"A", "B"}},
+		override: leakyConfigResolver{hardcoded: []string{"B", "C"}},
+	}
+	got, err := l.LeakedSecrets(context.Background(), "app", []string{"A", "B", "C", "D"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"A", "B", "C"}, got)
+}
+
+func TestLayeredConfigResolverLeakedSecretsSkipsNonCheckers(t *testing.T) {
+	l := layeredConfigResolver{
+		base:     configMapResolver{have: map[string]string{"A": "x"}},
+		override: leakyConfigResolver{hardcoded: []string{"A"}},
+	}
+	got, err := l.LeakedSecrets(context.Background(), "app", []string{"A"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"A"}, got)
+}
+
 func TestBuildSecretOverride(t *testing.T) {
 	RegisterSecretResolver(SecretResolverCommand{
 		Name: "test-override",
