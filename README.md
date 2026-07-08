@@ -135,13 +135,11 @@ services:
       LOG_LEVEL: info
 ```
 
-Ultra is also capable via `ultra validate` of checking whether every app's config is valid against the full environment it would boot with, so a missing secret or an unparseable value fails fast instead of at container start. Configuration is a contract. Your app likely already has an implicit config schema, spread across its structs, `os.Getenv` calls, and deployment files. Ultra makes that schema explicit. The `ultra validate` command resolves every dependency and checks every field against the struct, so it is closer to schema validation than to loading. Ultra does not replace runtime loading in production. Keep `os.Getenv`, caarlos0/env, koanf, or Kubernetes Secrets; Ultra is a development-time verification layer on top, so nothing at runtime has to change to adopt it.
+Ultra is also capable via `ultra validate` of checking whether every app's config is valid against the full environment it would boot with, so a missing secret or an unparseable value fails fast instead of at container start. 
 
-Ultra is deliberately narrow. It does not try to be Kubernetes, Terraform, or your cloud platform, and it does not want to generate your production infrastructure. Those systems own networking, IAM, secret rotation, provisioning, and deployment strategy, and they are good at it.
+Configuration is a contract. Your app likely already has an implicit config schema, spread across its structs, `os.Getenv` calls, and deployment files. Ultra makes that schema explicit. The `ultra validate` command resolves every dependency and checks every field against the struct, so it is closer to schema validation than to loading. 
 
-Ultra owns one thing: the contract between an application and the configuration it requires. The struct says "this is what my app needs"; the platform decides how those needs get met. That split keeps ownership boundaries clear, and it is the same split other tools already draw. Protocol Buffers define an API without dictating how it is served. OpenAPI describes a service without running it. Database schemas describe the shape of data without choosing the storage engine. Ultra applies that idea to application configuration: describe the requirements, validate them everywhere, and leave fulfillment to the systems built for it.
-
-So Ultra is not a replacement for config loaders or infrastructure tooling. It is the missing piece between them, a typed and validated contract that both sides can agree on.
+That said, Ultra is deliberately narrow. It does not try to be Kubernetes, Terraform, or your cloud platform, and it does not want to generate your production infrastructure. Those systems own networking, IAM, secret rotation, provisioning, and deployment strategy, and they are good at it. Ultra does not replace runtime loading in production. It owns one thing: the contract between an application and the configuration it requires. Protocol Buffers define an API without dictating how it is served. OpenAPI describes a service without running it. Database schemas describe the shape of data without choosing the storage engine. Ultra applies that idea to application configuration: describe the requirements, validate them everywhere, and leave fulfillment to the systems built for it.
 
 ## Documentation
 
