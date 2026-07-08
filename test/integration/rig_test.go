@@ -23,7 +23,7 @@ var fixtureNames = []string{
 }
 
 // Rig holds the shared, expensive setup the scenarios run against: the compiled
-// harness binary, the tidied fixture templates, and — when docker is present —
+// harness binary, the tidied fixture templates, and, when docker is present,
 // the live secret store. It is built once per run and injected into each
 // scenario, so there is no package-level state.
 type Rig struct {

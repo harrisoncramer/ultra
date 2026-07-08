@@ -34,7 +34,7 @@ func (f Field) RequiredIn(environment string) bool {
 // nested struct fields wherever they're defined, including sub-structs in other
 // packages, propagating a struct's required tag to its fields, and deduplicates
 // by env-var name. It fails if the package has no exported Config struct, or if
-// a field declares required/notEmpty in its env tag — required-ness must use the
+// a field declares required/notEmpty in its env tag; required-ness must use the
 // required tag instead.
 func Fields(dir string) ([]Field, error) {
 	st, err := configStruct(dir)

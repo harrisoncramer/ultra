@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/harrisoncramer/ultra/internal/project"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,11 +17,16 @@ type fakeScanner struct{ names []string }
 
 func (f fakeScanner) SecretNames(string) ([]string, error) { return f.names, nil }
 
-// fakeComposer renders a minimal, order-revealing override.
+// fakeComposer renders a minimal, order-revealing combined override: one
+// "app=names" line per app block, in the order it was given them.
 type fakeComposer struct{}
 
-func (fakeComposer) Override(app string, names []string) string {
-	return app + ":" + strings.Join(names, ",")
+func (fakeComposer) Override(apps []pkgcompose.AppSecrets) string {
+	var b strings.Builder
+	for _, a := range apps {
+		b.WriteString(a.App + "=" + strings.Join(a.Names, ",") + "\n")
+	}
+	return b.String()
 }
 
 func newTestGenerator(root string, names []string) *Generator {
@@ -33,38 +39,51 @@ func newTestGenerator(root string, names []string) *Generator {
 
 func TestGenerateWritesAllDeclaredNames(t *testing.T) {
 	root := t.TempDir()
-	overrides, err := newTestGenerator(root, []string{"B", "A"}).Generate([]string{"app"})
+	result, err := newTestGenerator(root, []string{"B", "A"}).Generate([]string{"app"})
 	require.NoError(t, err)
-	require.Len(t, overrides, 1)
+	require.Len(t, result.Apps, 1)
 
-	o := overrides[0]
+	o := result.Apps[0]
 	assert.Equal(t, "app", o.App)
 	assert.Equal(t, []string{"A", "B"}, o.Names, "names are sorted for a deterministic file")
 
-	want := filepath.Join(root, "tmp", "app.compose.yml")
-	assert.Equal(t, want, o.Path)
+	want := filepath.Join(root, "tmp", "ultra.compose.override.yml")
+	assert.Equal(t, want, result.Path)
 	data, err := os.ReadFile(want)
 	require.NoError(t, err)
-	assert.Equal(t, "app:A,B", string(data))
+	assert.Equal(t, "app=A,B\n", string(data))
+}
+
+func TestGenerateCombinesAppsIntoOneFile(t *testing.T) {
+	root := t.TempDir()
+	result, err := newTestGenerator(root, []string{"X"}).Generate([]string{"one", "two"})
+	require.NoError(t, err)
+
+	want := filepath.Join(root, "tmp", "ultra.compose.override.yml")
+	assert.Equal(t, want, result.Path, "both apps land in a single override file")
+	data, err := os.ReadFile(want)
+	require.NoError(t, err)
+	assert.Equal(t, "one=X\ntwo=X\n", string(data), "each app contributes a block in input order")
 }
 
 func TestGenerateSkipsAppsWithNoSecrets(t *testing.T) {
 	root := t.TempDir()
-	overrides, err := newTestGenerator(root, nil).Generate([]string{"app"})
+	result, err := newTestGenerator(root, nil).Generate([]string{"app"})
 	require.NoError(t, err)
-	require.Len(t, overrides, 1)
+	require.Len(t, result.Apps, 1)
 
-	assert.Empty(t, overrides[0].Path, "no file for an app that declares no secrets")
-	_, statErr := os.Stat(filepath.Join(root, "tmp", "app.compose.yml"))
+	assert.Empty(t, result.Apps[0].Names, "an app that declares no secrets contributes no names")
+	assert.Empty(t, result.Path, "no file when no app declares a secret")
+	_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.override.yml"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestGeneratePreservesInputOrder(t *testing.T) {
 	root := t.TempDir()
-	overrides, err := newTestGenerator(root, []string{"X"}).Generate([]string{"one", "two", "three"})
+	result, err := newTestGenerator(root, []string{"X"}).Generate([]string{"one", "two", "three"})
 	require.NoError(t, err)
 
-	got := []string{overrides[0].App, overrides[1].App, overrides[2].App}
+	got := []string{result.Apps[0].App, result.Apps[1].App, result.Apps[2].App}
 	assert.Equal(t, []string{"one", "two", "three"}, got)
 }
 
@@ -76,7 +95,20 @@ func TestGenerateHonorsOverrideDir(t *testing.T) {
 		Project:     project.Project{Root: root, ConfigDir: "config"},
 		OverrideDir: "committed/overrides",
 	})
-	overrides, err := g.Generate([]string{"app"})
+	result, err := g.Generate([]string{"app"})
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(root, "committed", "overrides", "app.compose.yml"), overrides[0].Path)
+	assert.Equal(t, filepath.Join(root, "committed", "overrides", "ultra.compose.override.yml"), result.Path)
+}
+
+func TestGenerateHonorsOverrideName(t *testing.T) {
+	root := t.TempDir()
+	g := NewGenerator(NewGeneratorParams{
+		Scanner:      fakeScanner{names: []string{"A"}},
+		Composer:     fakeComposer{},
+		Project:      project.Project{Root: root, ConfigDir: "config"},
+		OverrideName: "docker-compose.override.yml",
+	})
+	result, err := g.Generate([]string{"app"})
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "tmp", "docker-compose.override.yml"), result.Path)
 }

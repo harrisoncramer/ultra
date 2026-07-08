@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/harrisoncramer/ultra/internal/compose"
@@ -23,7 +24,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Execute builds the ultra command tree — root, run, validate, lint — and runs
+// Execute builds the ultra command tree (root, run, validate, lint) and runs
 // it. Flags default to any values set in the ultra config file (.ultra.toml under
 // --root, or the path given by --config-file); the command line overrides them.
 func Execute() error {
@@ -36,14 +37,23 @@ func Execute() error {
 }
 
 type sharedFlags struct {
-	root        string
-	configDir   string
-	configFile  string
-	overrideDir string
+	root         string
+	configDir    string
+	configFile   string
+	overrideDir  string
+	overrideName string
 }
 
 func (s *sharedFlags) project() project.Project {
 	return project.Project{Root: s.root, ConfigDir: s.configDir}
+}
+
+// DocsCommand builds the ultra command tree with no config-file defaults applied,
+// for generating the command reference. Resolver-specific flags are bound only
+// when a resolver is selected, so they are documented in the resolvers guide
+// rather than here.
+func DocsCommand() *cobra.Command {
+	return newRootCmd(fileConfig{})
 }
 
 func newRootCmd(fc fileConfig) *cobra.Command {
@@ -65,13 +75,13 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "gen [app-path...] [flags]",
-		Short: "Generate the given apps' compose override files without resolving secrets",
-		Long: "gen writes each app's names-only docker compose override — the file that maps\n" +
-			"every secret the app's Config declares onto its namespaced launcher variable —\n" +
-			"into --override-dir. It reads only the app's config package and never contacts\n" +
-			"the secret store, so it works offline and its output can be committed and\n" +
-			"reused by run. Apps are the directories given as arguments, or those listed in\n" +
-			".ultra.toml when none are given.",
+		Short: "Generate the single compose override for the given apps without resolving secrets",
+		Long: "gen writes one names-only docker compose override, the file that maps every\n" +
+			"secret each app's Config declares onto its namespaced launcher variable, one\n" +
+			"service block per app, into --override-dir/--override-name. It reads only the\n" +
+			"apps' config packages and never contacts the secret store, so it works offline\n" +
+			"and its output can be committed and reused by run. Apps are the directories\n" +
+			"given as arguments, or those listed in .ultra.toml when none are given.",
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
@@ -84,22 +94,31 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
 		}
-		overrides, err := gen.NewGenerator(gen.NewGeneratorParams{
-			Scanner:     scan.NewScanner(),
-			Composer:    compose.NewComposer(),
-			Project:     shared.project(),
-			OverrideDir: shared.overrideDir,
+		result, err := gen.NewGenerator(gen.NewGeneratorParams{
+			Scanner:      scan.NewScanner(),
+			Composer:     compose.NewComposer(),
+			Project:      shared.project(),
+			OverrideDir:  shared.overrideDir,
+			OverrideName: shared.overrideName,
 		}).Generate(apps)
 		if err != nil {
 			return err
 		}
-		for _, o := range overrides {
-			if o.Path == "" {
-				fmt.Fprintf(os.Stderr, "ultra: %s declares no secrets, no override written\n", o.App)
+		for _, o := range result.Apps {
+			if len(o.Names) == 0 {
+				fmt.Fprintf(os.Stderr, "ultra: %s declares no secrets, no service block written\n", o.App)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "ultra: wrote %s (%d secrets)\n", o.Path, len(o.Names))
+			fmt.Fprintf(os.Stderr, "ultra: %s contributed %d secrets\n", o.App, len(o.Names))
 		}
+		if result.Path == "" {
+			fmt.Fprintln(os.Stderr, "ultra: no app declares a secret, no override written")
+			return nil
+		}
+		base := filepath.Join(shared.root, "docker-compose.yml")
+		chain := strings.Join([]string{base, result.Path}, string(os.PathListSeparator))
+		fmt.Fprintf(os.Stderr, "ultra: wrote %s\n", result.Path)
+		fmt.Fprintf(os.Stderr, "ultra: run compose with COMPOSE_FILE=%s (or docker compose -f %s -f %s)\n", chain, base, result.Path)
 		return nil
 	}
 	return cmd
@@ -142,10 +161,11 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		}
 		runner := run.NewRunner(run.NewRunnerParams{
 			Generator: gen.NewGenerator(gen.NewGeneratorParams{
-				Scanner:     scan.NewScanner(),
-				Composer:    compose.NewComposer(),
-				Project:     shared.project(),
-				OverrideDir: shared.overrideDir,
+				Scanner:      scan.NewScanner(),
+				Composer:     compose.NewComposer(),
+				Project:      shared.project(),
+				OverrideDir:  shared.overrideDir,
+				OverrideName: shared.overrideName,
 			}),
 			Composer:    compose.NewComposer(),
 			Project:     shared.project(),
@@ -170,8 +190,8 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		Short: "Resolve the given apps' secrets and config and validate each app's Config",
 		Long: "validate resolves secrets the same way as run (--secret-resolver), but rather\n" +
 			"than starting containers it reconstructs the environment each app would boot\n" +
-			"with — its non-secret config from --config-resolver (docker-compose by default)\n" +
-			"plus its resolved secrets — and checks that ultra.Load parses the app's Config.\n" +
+			"with, its non-secret config from --config-resolver (docker-compose by default)\n" +
+			"plus its resolved secrets, and checks that ultra.Load parses the app's Config.\n" +
 			"Apps are the directories given as arguments, or those listed in .ultra.toml\n" +
 			"when none are given. It reports each app and exits non-zero if any fail.",
 		Args: cobra.ArbitraryArgs,
@@ -227,8 +247,8 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lint [app-path...] --secret-resolver <name> [flags]",
 		Short: "Statically check each app has no required key its resolvers won't provide",
-		Long: "lint checks that every required config key an app declares is provided —\n" +
-			"secrets by --secret-resolver, non-secret config by --config-resolver — by\n" +
+		Long: "lint checks that every required config key an app declares is provided:\n" +
+			"secrets by --secret-resolver, non-secret config by --config-resolver, by\n" +
 			"comparing the declared keys against the keys those resolvers offer. Unlike\n" +
 			"validate it never parses values or runs the app's config, so it works where\n" +
 			"the real secret values aren't reachable, such as CI with a resolver that\n" +
@@ -284,7 +304,8 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
 	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
 	cmd.Flags().StringVar(&shared.configFile, "config-file", "", "path to the ultra config file (default "+configFileName+" under --root)")
-	cmd.Flags().StringVar(&shared.overrideDir, "override-dir", "tmp", "directory under --root the generated compose overrides are written to; point it at a committed path to keep them in version control")
+	cmd.Flags().StringVar(&shared.overrideDir, "override-dir", "tmp", "directory under --root the generated compose override is written to; point it at a committed path to keep it in version control")
+	cmd.Flags().StringVar(&shared.overrideName, "override-name", "ultra.compose.override.yml", "file name of the generated compose override under --override-dir; set it to docker-compose.override.yml to have compose auto-load it")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args
@@ -306,8 +327,8 @@ func resolveApps(args []string, fc fileConfig) []string {
 }
 
 // bindSelectedSecretResolver binds the flags of the resolver named by
-// --secret-resolver onto cmd, so only that resolver's flags are defined — no
-// prefixing, no collisions between resolvers — and returns its factory. The name
+// --secret-resolver onto cmd, so only that resolver's flags are defined, with no
+// prefixing, no collisions between resolvers, and returns its factory. The name
 // comes from the command line or, failing that, .ultra.toml, since the resolver's
 // flags must be bound before cobra parses.
 func bindSelectedSecretResolver(cmd *cobra.Command, fc fileConfig) func(app string) resolve.SecretResolver {

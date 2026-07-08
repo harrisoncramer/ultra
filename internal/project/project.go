@@ -16,7 +16,7 @@ type Project struct {
 }
 
 // AppName is the short name used to namespace an app's secrets, derived from the
-// last element of its path — apps/server becomes "server".
+// last element of its path, so apps/server becomes "server".
 func (p Project) AppName(appPath string) string {
 	return filepath.Base(appPath)
 }

@@ -157,7 +157,7 @@ func applyOverrideSection(v *viper.Viper, flags map[string]string, section strin
 
 // applySection records the resolver chosen for a section and copies that
 // resolver's own flags out of its name-keyed sub-table. The command line wins
-// over the file when picking which resolver — and therefore which sub-table — to
+// over the file when picking which resolver (and therefore which sub-table) to
 // read, so an override still gets its matching defaults.
 func applySection(v *viper.Viper, flags map[string]string, section, resolverFlag string) {
 	sub := v.Sub(section)

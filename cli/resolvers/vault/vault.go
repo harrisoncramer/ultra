@@ -28,7 +28,7 @@ func init() {
 		Name:  "vault",
 		Short: "Resolve secrets from HashiCorp Vault (KV v2) over its HTTP API",
 		Long: "vault reads each app's secrets from a single HashiCorp Vault KV v2 secret,\n" +
-			"one secret per app whose data keys are the env-var names — for the app\n" +
+			"one secret per app whose data keys are the env-var names, for the app\n" +
 			"'worker' that is <mount>/worker with keys like GOOGLE_CLIENT_ID. --mount\n" +
 			"selects the KV v2 mount (default 'secret'). It talks to Vault's HTTP API\n" +
 			"directly (no vault binary required): the address comes from --address or\n" +

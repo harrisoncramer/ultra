@@ -3,8 +3,8 @@
 // Package integration drives the ultra CLI end to end the way a real consumer
 // runs it: a binary built with a custom secret resolver that reads from a live
 // Redis store, pointed at real fixture projects with docker compose. Unlike the
-// unit tests it exercises the parts that shell out — the docker-compose config
-// resolver, run's container launch, validate's generated go program — so a break
+// unit tests it exercises the parts that shell out (the docker-compose config
+// resolver, run's container launch, validate's generated go program) so a break
 // in that wiring is caught. It is behind the integration build tag and needs
 // docker for every scenario except gen.
 package integration
@@ -45,7 +45,7 @@ func (r *Rig) genListsAllDeclaredSecrets(t *testing.T) {
 		t.Fatalf("gen failed:\n%s", res.output)
 	}
 
-	data, err := os.ReadFile(filepath.Join(f.root, "genout", "worker.compose.yml"))
+	data, err := os.ReadFile(filepath.Join(f.root, "genout", overrideName))
 	if err != nil {
 		t.Fatalf("reading override: %v", err)
 	}
@@ -129,10 +129,11 @@ func (r *Rig) runNamespacesSecretsPerApp(t *testing.T) {
 		t.Fatalf("run failed:\n%s", res.output)
 	}
 
-	// The shared name DATABASE_URL is namespaced per app, so the two overrides map
-	// it onto distinct launcher variables and can't collide.
-	assertFileContains(t, f.overridePath("server"), "DATABASE_URL: ${ULTRA_SERVER__DATABASE_URL}")
-	assertFileContains(t, f.overridePath("worker"), "DATABASE_URL: ${ULTRA_WORKER__DATABASE_URL}")
+	// The shared name DATABASE_URL is namespaced per app, so within the one
+	// override the two service blocks map it onto distinct launcher variables and
+	// can't collide.
+	assertFileContains(t, f.overridePath(), "DATABASE_URL: ${ULTRA_SERVER__DATABASE_URL}")
+	assertFileContains(t, f.overridePath(), "DATABASE_URL: ${ULTRA_WORKER__DATABASE_URL}")
 	for _, want := range []string{"resolved 2/2 secrets for server", "resolved 2/2 secrets for worker"} {
 		if !strings.Contains(res.output, want) {
 			t.Errorf("expected %q\n%s", want, res.output)
@@ -250,7 +251,7 @@ func (r *Rig) runForwardsEmptySecretValue(t *testing.T) {
 	f := r.openFixture(t, "single-app")
 	t.Cleanup(func() { r.composeDown(f) })
 
-	// The store holds the key with an empty value — distinct from not holding it.
+	// The store holds the key with an empty value, distinct from not holding it.
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": ""}); err != nil {
 		t.Fatal(err)
 	}
@@ -289,12 +290,15 @@ func (r *Rig) runSkipsAppWithoutSecrets(t *testing.T) {
 		t.Fatalf("run failed:\n%s", res.output)
 	}
 
-	// nosec declares no secrets, so it gets no override; the others still do.
-	if _, err := os.Stat(f.overridePath("nosec")); !os.IsNotExist(err) {
-		t.Errorf("an app with no secrets should get no override (stat err: %v)", err)
+	// nosec declares no secrets, so it contributes no service block; the others
+	// still do.
+	assertFileContains(t, f.overridePath(), "DATABASE_URL: ${ULTRA_SERVER__DATABASE_URL}")
+	assertFileContains(t, f.overridePath(), "DATABASE_URL: ${ULTRA_WORKER__DATABASE_URL}")
+	if data, err := os.ReadFile(f.overridePath()); err != nil {
+		t.Errorf("reading combined override: %v", err)
+	} else if strings.Contains(string(data), "nosec:") {
+		t.Errorf("an app with no secrets should get no service block:\n%s", data)
 	}
-	assertFileContains(t, f.overridePath("server"), "DATABASE_URL: ${ULTRA_SERVER__DATABASE_URL}")
-	assertFileContains(t, f.overridePath("worker"), "DATABASE_URL: ${ULTRA_WORKER__DATABASE_URL}")
 }
 
 func (r *Rig) validateRedactsMalformedValue(t *testing.T) {
@@ -328,7 +332,7 @@ func (r *Rig) genHonorsConfigDir(t *testing.T) {
 	if !ok.ok() {
 		t.Fatalf("gen should find the config under pkg/config:\n%s", ok.output)
 	}
-	assertFileContains(t, filepath.Join(f.root, "out", "worker.compose.yml"), "IT_API_KEY: ${ULTRA_WORKER__IT_API_KEY}")
+	assertFileContains(t, filepath.Join(f.root, "out", overrideName), "IT_API_KEY: ${ULTRA_WORKER__IT_API_KEY}")
 
 	// The default config dir is "config", which this fixture doesn't have, so
 	// gen must fail without the flag.
@@ -345,13 +349,13 @@ func (r *Rig) configFilePrecedence(t *testing.T) {
 	if res := r.ultra(t, "gen", "--root", f.root); !res.ok() {
 		t.Fatalf("gen should use apps and override-dir from .ultra.toml:\n%s", res.output)
 	}
-	assertFileContains(t, filepath.Join(f.root, "from-file", "worker.compose.yml"), "IT_API_KEY:")
+	assertFileContains(t, filepath.Join(f.root, "from-file", overrideName), "IT_API_KEY:")
 
 	// A command-line --override-dir wins over the file's value.
 	if res := r.ultra(t, "gen", "--root", f.root, "--override-dir", "from-cli"); !res.ok() {
 		t.Fatalf("gen with a command-line override-dir failed:\n%s", res.output)
 	}
-	if _, err := os.Stat(filepath.Join(f.root, "from-cli", "worker.compose.yml")); err != nil {
+	if _, err := os.Stat(filepath.Join(f.root, "from-cli", overrideName)); err != nil {
 		t.Errorf("command-line --override-dir should win over the file: %v", err)
 	}
 }

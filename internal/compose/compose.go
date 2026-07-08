@@ -18,8 +18,9 @@ func (c *Composer) Var(app, name string) string {
 	return pkgcompose.ComposeVar(app, name)
 }
 
-// Override renders the compose override that maps app's secrets onto their
-// namespaced launcher variables. It contains references only, never values.
-func (c *Composer) Override(app string, names []string) string {
-	return pkgcompose.ComposeOverride(app, names)
+// Override renders the single compose override that maps every app's secrets
+// onto their namespaced launcher variables. It contains references only, never
+// values.
+func (c *Composer) Override(apps []pkgcompose.AppSecrets) string {
+	return pkgcompose.ComposeOverride(apps)
 }
