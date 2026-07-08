@@ -8,6 +8,7 @@
   <a href="https://github.com/harrisoncramer/ultra/actions/workflows/golang_ci.yml"><img src="https://github.com/harrisoncramer/ultra/actions/workflows/golang_ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://pkg.go.dev/github.com/harrisoncramer/ultra"><img src="https://pkg.go.dev/badge/github.com/harrisoncramer/ultra.svg" alt="Go Reference" /></a>
   <a href="https://goreportcard.com/report/github.com/harrisoncramer/ultra"><img src="https://goreportcard.com/badge/github.com/harrisoncramer/ultra" alt="Go Report Card" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
 </p>
 
 <hr>
