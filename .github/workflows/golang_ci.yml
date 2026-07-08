@@ -104,3 +104,33 @@ jobs:
             go-${{ runner.os }}-
 
       - run: mise run integration
+
+  docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Mise
+        uses: ./.github/actions/use-mise
+
+      - name: Use Caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-${{ runner.os }}-
+
+      - run: mise run gen-docs
+
+      - name: Fail if the command reference is stale
+        run: |
+          if ! git diff --quiet -- docs/reference; then
+            echo "docs/reference is out of date; run 'mise run gen-docs' and commit the result." >&2
+            git diff -- docs/reference >&2
+            exit 1
+          fi

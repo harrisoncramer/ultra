@@ -52,25 +52,26 @@ func TestComposeVarNoCollisionAcrossApps(t *testing.T) {
 
 type composeOverrideCase struct {
 	name       string
-	app        string
-	envNames   []string
+	apps       []compose.AppSecrets
 	goldenFile string
 }
 
 func TestComposeOverride(t *testing.T) {
 	cases := []composeOverrideCase{
 		{
-			name:       "worker override matches golden",
-			app:        "worker",
-			envNames:   []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"},
-			goldenFile: "worker_override.golden",
+			name: "combined override over multiple apps matches golden",
+			apps: []compose.AppSecrets{
+				{App: "worker", Names: []string{"DATABASE_URL", "GOOGLE_CLIENT_ID"}},
+				{App: "server", Names: []string{"DATABASE_URL"}},
+			},
+			goldenFile: "combined_override.golden",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			want, err := os.ReadFile(filepath.Join("..", "testdata", c.goldenFile))
 			require.NoError(t, err)
-			assert.Equal(t, string(want), compose.ComposeOverride(c.app, c.envNames))
+			assert.Equal(t, string(want), compose.ComposeOverride(c.apps))
 		})
 	}
 }

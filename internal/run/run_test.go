@@ -10,6 +10,7 @@ import (
 	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +44,12 @@ func (fakeComposer) Var(app, name string) string {
 	return "ULTRA_" + strings.ToUpper(app) + "__" + name
 }
 
-func (fakeComposer) Override(_ string, names []string) string {
+func (fakeComposer) Override(apps []pkgcompose.AppSecrets) string {
 	var b strings.Builder
-	for _, n := range names {
-		b.WriteString(n + ":\n")
+	for _, a := range apps {
+		for _, n := range a.Names {
+			b.WriteString(n + ":\n")
+		}
 	}
 	return b.String()
 }
@@ -137,7 +140,7 @@ func TestPrepare(t *testing.T) {
 			if dir == "" {
 				dir = "tmp"
 			}
-			override := filepath.Join(root, dir, "app.compose.yml")
+			override := filepath.Join(root, dir, "ultra.compose.override.yml")
 			data, err := os.ReadFile(override)
 			if !c.wantOverride {
 				assert.ErrorIs(t, err, os.ErrNotExist)
@@ -177,6 +180,6 @@ func TestRunKeepsOverrideAfterExit(t *testing.T) {
 		Command:     []string{"true"},
 	})
 	require.NoError(t, err)
-	_, statErr := os.Stat(filepath.Join(root, "tmp", "app.compose.yml"))
+	_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.override.yml"))
 	assert.NoError(t, statErr, "override should be kept after run")
 }

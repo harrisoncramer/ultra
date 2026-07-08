@@ -1,8 +1,8 @@
-// Package gen is the generate domain: it writes each app's names-only docker
-// compose override from the secret names its Config declares. Generation is a
-// static operation over each app's config package — it never touches the secret
-// store — so it works where the store is unreachable, and its output can be
-// committed once and reused by run.
+// Package gen is the generate domain: it writes a single names-only docker
+// compose override covering every app, from the secret names each app's Config
+// declares. Generation is a static operation over each app's config package — it
+// never touches the secret store — so it works where the store is unreachable,
+// and its output can be committed once and reused by run.
 package gen
 
 import (
@@ -12,82 +12,109 @@ import (
 	"sort"
 
 	"github.com/harrisoncramer/ultra/internal/project"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 )
+
+// defaultOverrideName is the combined override file gen writes when no name is
+// configured. It is deliberately not docker-compose.override.yml, whose fixed
+// name compose auto-loads, so gen never clobbers a hand-written override.
+const defaultOverrideName = "ultra.compose.override.yml"
 
 // scanner reports the secret env-var names an app's Config declares.
 type scanner interface {
 	SecretNames(dir string) ([]string, error)
 }
 
-// composer renders the names-only compose override for an app.
+// composer renders the single names-only compose override covering every app.
 type composer interface {
-	Override(app string, names []string) string
+	Override(apps []pkgcompose.AppSecrets) string
 }
 
-// Generator writes apps' compose overrides from their declared secret names.
+// Generator writes the combined compose override from apps' declared secret names.
 type Generator struct {
-	scanner     scanner
-	composer    composer
-	project     project.Project
-	overrideDir string
+	scanner      scanner
+	composer     composer
+	project      project.Project
+	overrideDir  string
+	overrideName string
 }
 
 // NewGeneratorParams are the dependencies and layout NewGenerator needs.
 type NewGeneratorParams struct {
-	Scanner     scanner
-	Composer    composer
-	Project     project.Project
-	OverrideDir string // dir under root the overrides are written to; empty means "tmp"
+	Scanner      scanner
+	Composer     composer
+	Project      project.Project
+	OverrideDir  string // dir under root the override is written to; empty means "tmp"
+	OverrideName string // file name of the combined override; empty means the default
 }
 
-// NewGenerator builds a Generator, defaulting the override dir.
+// NewGenerator builds a Generator, defaulting the override dir and file name.
 func NewGenerator(params NewGeneratorParams) *Generator {
 	overrideDir := params.OverrideDir
 	if overrideDir == "" {
 		overrideDir = "tmp"
 	}
+	overrideName := params.OverrideName
+	if overrideName == "" {
+		overrideName = defaultOverrideName
+	}
 	return &Generator{
-		scanner:     params.Scanner,
-		composer:    params.Composer,
-		project:     params.Project,
-		overrideDir: overrideDir,
+		scanner:      params.Scanner,
+		composer:     params.Composer,
+		project:      params.Project,
+		overrideDir:  overrideDir,
+		overrideName: overrideName,
 	}
 }
 
-// AppOverride is one app's generated override: the secret names its Config
-// declares and the override file written for it. Path is empty when the app
-// declares no secrets, in which case no file is written.
+// AppOverride is one app's contribution to the combined override: the secret
+// names its Config declares, in sorted order. An app that declares no secrets
+// has no Names and contributes no service block.
 type AppOverride struct {
 	App   string
 	Names []string
-	Path  string
 }
 
-// Generate writes each app's compose override listing every secret name its
-// Config declares, independent of any secret store, and returns the result per
-// app in input order. An app that declares no secrets gets no file.
-func (g *Generator) Generate(apps []string) ([]AppOverride, error) {
+// Result is the outcome of a generation: each app's declared secret names in
+// input order, and the single combined override file written for them. Path is
+// empty when no app declares any secret, in which case no file is written.
+type Result struct {
+	Apps []AppOverride
+	Path string
+}
+
+// Generate writes a single compose override listing every secret name each app's
+// Config declares, independent of any secret store, and returns each app's names
+// in input order plus the written file's path. Apps that declare no secrets
+// contribute no service block; if none declare any, no file is written.
+func (g *Generator) Generate(apps []string) (Result, error) {
 	out := make([]AppOverride, 0, len(apps))
+	blocks := make([]pkgcompose.AppSecrets, 0, len(apps))
 	for _, appPath := range apps {
 		app := g.project.AppName(appPath)
 		names, err := g.scanner.SecretNames(g.project.AppConfigDir(appPath))
 		if err != nil {
-			return nil, fmt.Errorf("reading %s config: %w", app, err)
+			return Result{}, fmt.Errorf("reading %s config: %w", app, err)
 		}
 		if len(names) == 0 {
 			out = append(out, AppOverride{App: app})
 			continue
 		}
 		sort.Strings(names)
-
-		path := filepath.Join(g.project.Root, g.overrideDir, app+".compose.yml")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, fmt.Errorf("creating override dir for %s: %w", app, err)
-		}
-		if err := os.WriteFile(path, []byte(g.composer.Override(app, names)), 0o644); err != nil {
-			return nil, fmt.Errorf("writing compose override for %s: %w", app, err)
-		}
-		out = append(out, AppOverride{App: app, Names: names, Path: path})
+		out = append(out, AppOverride{App: app, Names: names})
+		blocks = append(blocks, pkgcompose.AppSecrets{App: app, Names: names})
 	}
-	return out, nil
+
+	if len(blocks) == 0 {
+		return Result{Apps: out}, nil
+	}
+
+	path := filepath.Join(g.project.Root, g.overrideDir, g.overrideName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return Result{}, fmt.Errorf("creating override dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(g.composer.Override(blocks)), 0o644); err != nil {
+		return Result{}, fmt.Errorf("writing compose override: %w", err)
+	}
+	return Result{Apps: out, Path: path}, nil
 }

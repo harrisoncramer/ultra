@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+#MISE description="Regenerate the command reference under docs/reference"
+
+go run ./cmd/gen-docs docs/reference

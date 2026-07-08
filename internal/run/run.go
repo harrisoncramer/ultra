@@ -1,4 +1,4 @@
-// Package run is the run domain: it generates each app's names-only compose
+// Package run is the run domain: it generates the combined names-only compose
 // override, resolves each app's secrets, and execs a command with the launcher
 // environment and COMPOSE_FILE set.
 package run
@@ -23,10 +23,10 @@ import (
 // simultaneously.
 const maxConcurrentApps = 8
 
-// generator writes each app's compose override and reports the secret names it
-// declares, independent of the secret store.
+// generator writes the combined compose override and reports the secret names
+// each app declares, independent of the secret store.
 type generator interface {
-	Generate(apps []string) ([]gen.AppOverride, error)
+	Generate(apps []string) (gen.Result, error)
 }
 
 // composer renders the namespaced launcher variable a secret is passed through.
@@ -86,12 +86,13 @@ type Params struct {
 // appended to env. A store-level failure is fatal; a missing individual secret
 // is not. No secret is written to disk.
 func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) {
-	// The overrides are static (they list the declared secret names, not values),
-	// so generate them up front without the store; run only resolves and injects.
-	overrides, err := r.generator.Generate(params.Apps)
+	// The override is static (it lists the declared secret names, not values),
+	// so generate it up front without the store; run only resolves and injects.
+	result, err := r.generator.Generate(params.Apps)
 	if err != nil {
 		return nil, err
 	}
+	overrides := result.Apps
 
 	// Each app's secret store round-trip is independent, so fire them all off
 	// concurrently and let the errgroup cancel the rest on the first store-level
@@ -136,11 +137,11 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
-	for i, o := range overrides {
+	if result.Path != "" {
+		composeFiles = append(composeFiles, result.Path)
+	}
+	for i := range overrides {
 		env = append(env, results[i].envVars...)
-		if o.Path != "" {
-			composeFiles = append(composeFiles, o.Path)
-		}
 		if results[i].log != "" {
 			fmt.Fprint(os.Stderr, results[i].log)
 		}

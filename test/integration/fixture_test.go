@@ -29,9 +29,12 @@ func newFixture(t *testing.T, template string) *fixture {
 	return &fixture{root: root}
 }
 
-// overridePath is where run/gen write app's override under the default dir.
-func (f *fixture) overridePath(app string) string {
-	return filepath.Join(f.root, "tmp", app+".compose.yml")
+// overrideName is the file run/gen write the combined compose override to.
+const overrideName = "ultra.compose.override.yml"
+
+// overridePath is where run/gen write the combined override under the default dir.
+func (f *fixture) overridePath() string {
+	return filepath.Join(f.root, "tmp", overrideName)
 }
 
 // prepareTemplate copies a testdata project into dir, points its ultra
