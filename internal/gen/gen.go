@@ -90,8 +90,13 @@ type Result struct {
 func (g *Generator) Generate(apps []string) (Result, error) {
 	out := make([]AppOutput, 0, len(apps))
 	blocks := make([]pkgcompose.AppSecrets, 0, len(apps))
+	seen := make(map[string]string, len(apps))
 	for _, appPath := range apps {
 		app := g.project.AppName(appPath)
+		if prev, dup := seen[app]; dup {
+			return Result{}, fmt.Errorf("app name %q is used by both %s and %s: their secrets share one namespace and would collide in the compose file", app, prev, appPath)
+		}
+		seen[app] = appPath
 		names, err := g.scanner.SecretNames(g.project.AppConfigDir(appPath))
 		if err != nil {
 			return Result{}, fmt.Errorf("reading %s config: %w", app, err)
