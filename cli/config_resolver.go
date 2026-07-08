@@ -53,6 +53,61 @@ func init() {
 	})
 }
 
+// layeredConfigResolver queries base then layers override on top, so an override
+// value wins over the base for the same key. A nil override is a no-op.
+type layeredConfigResolver struct {
+	base     ConfigResolver
+	override ConfigResolver
+}
+
+func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[string]string, error) {
+	out, err := l.base.Resolve(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	if l.override == nil {
+		return out, nil
+	}
+	ov, err := l.override.Resolve(ctx, app)
+	if err != nil {
+		return nil, fmt.Errorf("config override resolver: %w", err)
+	}
+	if out == nil {
+		out = make(map[string]string, len(ov))
+	}
+	for k, v := range ov {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// layerConfigResolver wraps base so the override's values win, or returns base
+// unchanged when no override is configured.
+func layerConfigResolver(base, override ConfigResolver) ConfigResolver {
+	if override == nil {
+		return base
+	}
+	return layeredConfigResolver{base: base, override: override}
+}
+
+// buildConfigOverride builds the override config resolver named by the
+// [config-override] section for root, or returns nil when none is configured. Its
+// flags come only from the file, bound on a private flag set.
+func buildConfigOverride(fc fileConfig, root string) (ConfigResolver, error) {
+	name := fc.override.configResolver
+	if name == "" {
+		return nil, nil
+	}
+	rc, ok := findConfigResolver(name)
+	if !ok {
+		return nil, fmt.Errorf("config-override resolver %q is not registered", name)
+	}
+	fs := pflag.NewFlagSet("config-override", pflag.ContinueOnError)
+	build := rc.Setup(fs)
+	applyFlagSet(fs, fc.override.configFlags)
+	return build(root)
+}
+
 // findConfigResolver returns the config resolver command registered under name.
 func findConfigResolver(name string) (ConfigResolverCommand, bool) {
 	for _, rc := range configResolvers {

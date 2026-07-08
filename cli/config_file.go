@@ -30,6 +30,17 @@ import (
 //
 //	# top-level keys map to the shared flags
 //	apps-dir = "services"             # --apps-dir
+//
+//	# optional override layers: any registered resolver, layered on top of the
+//	# base one, whose values win. Their flags live only here, never on the command
+//	# line, so a same-provider override doesn't collide with the base resolver.
+//	[secrets-override]
+//	resolver = "1password"
+//	[secrets-override.1password]
+//	vault = "LocalDev"
+//
+//	[config-override]
+//	resolver = "env"
 const configFileName = ".ultra.toml"
 
 // fileConfig holds the defaults read from .ultra.toml: flag values keyed by flag
@@ -37,8 +48,20 @@ const configFileName = ".ultra.toml"
 // paths to operate on when none are passed on the command line. Both are empty
 // when no file exists.
 type fileConfig struct {
-	flags map[string]string
-	apps  []string
+	flags    map[string]string
+	apps     []string
+	override overrideConfig
+}
+
+// overrideConfig holds the optional resolvers layered on top of the base ones,
+// read from the [secrets-override] and [config-override] sections. Each keeps its
+// own resolver's flags, separate from the base resolver's, so a same-provider
+// override does not clobber them.
+type overrideConfig struct {
+	secretResolver string
+	secretFlags    map[string]string
+	configResolver string
+	configFlags    map[string]string
 }
 
 // loadConfig reads the ultra config file and flattens its sections into flag
@@ -89,7 +112,33 @@ func flatten(v *viper.Viper) fileConfig {
 	}
 	applySection(v, flags, "secrets", "secret-resolver")
 	applySection(v, flags, "config", "config-resolver")
-	return fileConfig{flags: flags, apps: v.GetStringSlice("apps")}
+
+	override := overrideConfig{secretFlags: map[string]string{}, configFlags: map[string]string{}}
+	override.secretResolver = applyOverrideSection(v, override.secretFlags, "secrets-override")
+	override.configResolver = applyOverrideSection(v, override.configFlags, "config-override")
+
+	return fileConfig{flags: flags, apps: v.GetStringSlice("apps"), override: override}
+}
+
+// applyOverrideSection records the override resolver a section selects and copies
+// that resolver's own flags out of its name-keyed sub-table into flags, returning
+// the resolver name. Unlike applySection the command line never picks an override
+// resolver, so the choice comes only from the file.
+func applyOverrideSection(v *viper.Viper, flags map[string]string, section string) string {
+	sub := v.Sub(section)
+	if sub == nil {
+		return ""
+	}
+	name := sub.GetString("resolver")
+	if name == "" {
+		return ""
+	}
+	if rs := sub.Sub(name); rs != nil {
+		for k, val := range rs.AllSettings() {
+			flags[k] = fmt.Sprint(val)
+		}
+	}
+	return name
 }
 
 // applySection records the resolver chosen for a section and copies that

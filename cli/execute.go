@@ -82,7 +82,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			configDir:   shared.configDir,
 			overrideDir: shared.overrideDir,
 			composeFile: composeFile,
-			resolverFor: resolverFor,
+			resolverFor: layerSecretResolver(resolverFor, buildSecretOverride(fc)),
 			command:     args[dash:],
 		})
 	}
@@ -131,14 +131,18 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		overrideCR, err := buildConfigOverride(fc, shared.root)
+		if err != nil {
+			return err
+		}
 		return validate(cmd.Context(), validateParams{
 			root:               shared.root,
 			apps:               apps,
 			configDir:          shared.configDir,
 			environment:        environment,
 			rejectUnreferenced: rejectUnreferenced,
-			secretResolver:     resolverFor,
-			configResolver:     cr,
+			secretResolver:     layerSecretResolver(resolverFor, buildSecretOverride(fc)),
+			configResolver:     layerConfigResolver(cr, overrideCR),
 		})
 	}
 	return cmd
@@ -188,14 +192,18 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		overrideCR, err := buildConfigOverride(fc, shared.root)
+		if err != nil {
+			return err
+		}
 		return lint(cmd.Context(), lintParams{
 			root:               shared.root,
 			apps:               apps,
 			configDir:          shared.configDir,
 			environment:        environment,
 			rejectUnreferenced: rejectUnreferenced,
-			secretResolver:     resolverFor,
-			configResolver:     cr,
+			secretResolver:     layerSecretResolver(resolverFor, buildSecretOverride(fc)),
+			configResolver:     layerConfigResolver(cr, overrideCR),
 		})
 	}
 	return cmd
