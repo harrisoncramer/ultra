@@ -16,21 +16,21 @@ import (
 	"github.com/harrisoncramer/ultra/internal/resolve"
 )
 
-// Scanner reports the secret env-var names an app's Config declares.
-type Scanner interface {
+// scanner reports the secret env-var names an app's Config declares.
+type scanner interface {
 	SecretNames(dir string) ([]string, error)
 }
 
-// Composer renders the compose override and the namespaced launcher variables.
-type Composer interface {
+// composer renders the compose override and the namespaced launcher variables.
+type composer interface {
 	Var(app, name string) string
 	Override(app string, names []string) string
 }
 
 // Runner resolves apps' secrets and launches commands against them.
 type Runner struct {
-	scanner     Scanner
-	composer    Composer
+	scanner     scanner
+	composer    composer
 	project     project.Project
 	overrideDir string
 	composeFile string
@@ -38,8 +38,8 @@ type Runner struct {
 
 // NewRunnerParams are the dependencies and layout NewRunner needs.
 type NewRunnerParams struct {
-	Scanner     Scanner
-	Composer    Composer
+	Scanner     scanner
+	Composer    composer
 	Project     project.Project
 	OverrideDir string // dir under root the overrides are written to; empty means "tmp"
 	ComposeFile string // base compose file COMPOSE_FILE points at; empty means "docker-compose.yml"
@@ -64,12 +64,12 @@ func NewRunner(params NewRunnerParams) *Runner {
 	}
 }
 
-// Prepared is the result of resolving every app's secrets: the launcher
+// prepared is the result of resolving every app's secrets: the launcher
 // environment (with app-namespaced secrets) and the compose files that forward
 // them into containers.
-type Prepared struct {
-	Env          []string
-	ComposeFiles []string
+type prepared struct {
+	env          []string
+	composeFiles []string
 }
 
 // Params identify the apps to operate on and how to resolve their secrets.
@@ -79,12 +79,12 @@ type Params struct {
 	Command     []string
 }
 
-// Prepare discovers every app, resolves its secrets via ResolverFor, writes the
+// prepare discovers every app, resolves its secrets via ResolverFor, writes the
 // names-only compose override that forwards them, and returns the launcher env
 // (os environment plus app-namespaced secrets) and the compose file list with
 // COMPOSE_FILE already appended to env. A store-level failure is fatal; a missing
 // individual secret is not. No secret is written to disk.
-func (r *Runner) Prepare(ctx context.Context, params Params) (*Prepared, error) {
+func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) {
 	env := os.Environ()
 	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
 
@@ -129,13 +129,13 @@ func (r *Runner) Prepare(ctx context.Context, params Params) (*Prepared, error) 
 	}
 
 	env = append(env, "COMPOSE_FILE="+strings.Join(composeFiles, string(os.PathListSeparator)))
-	return &Prepared{Env: env, ComposeFiles: composeFiles}, nil
+	return &prepared{env: env, composeFiles: composeFiles}, nil
 }
 
 // Run resolves every app's secrets and execs the command with them set in the
 // environment and COMPOSE_FILE pointed at the generated overrides.
 func (r *Runner) Run(ctx context.Context, params Params) error {
-	prep, err := r.Prepare(ctx, params)
+	prep, err := r.prepare(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (r *Runner) Run(ctx context.Context, params Params) error {
 		return fmt.Errorf("command not found: %s", params.Command[0])
 	}
 	c := exec.CommandContext(ctx, bin, params.Command[1:]...)
-	c.Env = prep.Env
+	c.Env = prep.env
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

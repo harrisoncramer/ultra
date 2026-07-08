@@ -106,17 +106,17 @@ func TestPrepare(t *testing.T) {
 				ComposeFile: c.composeFile,
 			})
 
-			prep, err := runner.Prepare(context.Background(), Params{
+			prep, err := runner.prepare(context.Background(), Params{
 				Apps:        []string{"app"},
 				ResolverFor: resolverFor(c.resolved),
 			})
 			require.NoError(t, err)
 
 			for k, v := range c.wantEnv {
-				assert.True(t, hasEnv(prep.Env, k, v), "env missing %s=%s", k, v)
+				assert.True(t, hasEnv(prep.env, k, v), "env missing %s=%s", k, v)
 			}
 			for _, pfx := range c.wantEnvAbsentPfx {
-				for _, e := range prep.Env {
+				for _, e := range prep.env {
 					assert.False(t, strings.HasPrefix(e, pfx), "env forwarded unexpected var: %q", e)
 				}
 			}
@@ -129,11 +129,11 @@ func TestPrepare(t *testing.T) {
 			data, err := os.ReadFile(override)
 			if !c.wantOverride {
 				assert.ErrorIs(t, err, os.ErrNotExist)
-				assert.NotContains(t, prep.ComposeFiles, override)
+				assert.NotContains(t, prep.composeFiles, override)
 				return
 			}
 			require.NoError(t, err)
-			assert.Contains(t, prep.ComposeFiles, override)
+			assert.Contains(t, prep.composeFiles, override)
 			for _, s := range c.wantContains {
 				assert.Contains(t, string(data), s)
 			}
@@ -152,13 +152,13 @@ func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 		Project:     project.Project{Root: root, ConfigDir: "config"},
 		ComposeFile: "docker-compose.lake.yml",
 	})
-	prep, err := runner.Prepare(context.Background(), Params{
+	prep, err := runner.prepare(context.Background(), Params{
 		Apps:        []string{"app"},
 		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, prep.ComposeFiles)
-	assert.Equal(t, filepath.Join(root, "docker-compose.lake.yml"), prep.ComposeFiles[0])
+	require.NotEmpty(t, prep.composeFiles)
+	assert.Equal(t, filepath.Join(root, "docker-compose.lake.yml"), prep.composeFiles[0])
 }
 
 func TestRunKeepsOverrideAfterExit(t *testing.T) {

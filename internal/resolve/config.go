@@ -79,6 +79,7 @@ type layeredConfigResolver struct {
 	override ConfigResolver
 }
 
+// Resolve returns the base values with the override's merged on top.
 func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[string]string, error) {
 	out, err := l.base.Resolve(ctx, app)
 	if err != nil {
@@ -91,13 +92,7 @@ func (l layeredConfigResolver) Resolve(ctx context.Context, app string) (map[str
 	if err != nil {
 		return nil, fmt.Errorf("config override resolver: %w", err)
 	}
-	if out == nil {
-		out = make(map[string]string, len(ov))
-	}
-	for k, v := range ov {
-		out[k] = v
-	}
-	return out, nil
+	return mergeOver(out, ov), nil
 }
 
 // LayerConfigResolver wraps base so the override's values win, or returns base
@@ -136,6 +131,8 @@ type dockerComposeConfig struct {
 	err      error
 }
 
+// Resolve returns app's non-secret environment from the compose file, loading
+// and caching the file on first use.
 func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[string]string, error) {
 	d.once.Do(func() { d.services, d.err = d.load(ctx) })
 	if d.err != nil {
@@ -144,6 +141,8 @@ func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[stri
 	return d.services[app], nil
 }
 
+// load runs `docker compose config` once and returns each service's non-secret
+// environment keyed by service name.
 func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]string, error) {
 	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", d.composeFile, "config", "--format", "json")
 	var stdout, stderr bytes.Buffer
@@ -183,6 +182,7 @@ func (d *dockerComposeConfig) load(ctx context.Context) (map[string]map[string]s
 // or pod) already holds them, and validate starts from the process env anyway.
 type envConfig struct{}
 
+// Resolve returns no values: the environment already holds the non-secret config.
 func (envConfig) Resolve(_ context.Context, _ string) (map[string]string, error) {
 	return map[string]string{}, nil
 }

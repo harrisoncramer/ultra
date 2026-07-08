@@ -18,8 +18,8 @@ import (
 	"github.com/harrisoncramer/ultra/internal/scan"
 )
 
-// Scanner reports an app's declared fields and its config package import path.
-type Scanner interface {
+// scanner reports an app's declared fields and its config package import path.
+type scanner interface {
 	Fields(dir string) ([]scan.Field, error)
 	ConfigImportPath(dir string) (string, error)
 }
@@ -27,7 +27,7 @@ type Scanner interface {
 // Validator checks that each app's Config parses against its reconstructed
 // environment.
 type Validator struct {
-	scanner            Scanner
+	scanner            scanner
 	project            project.Project
 	environment        string
 	rejectUnreferenced bool
@@ -37,7 +37,7 @@ type Validator struct {
 
 // NewValidatorParams are the dependencies and options NewValidator needs.
 type NewValidatorParams struct {
-	Scanner            Scanner
+	Scanner            scanner
 	Project            project.Project
 	Environment        string
 	RejectUnreferenced bool
@@ -77,6 +77,8 @@ func (v *Validator) Validate(ctx context.Context, apps []string) error {
 	return nil
 }
 
+// validateApp reconstructs one app's boot environment, optionally rejects
+// unreferenced keys, then builds and runs a tiny program that loads its Config.
 func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	app := v.project.AppName(appPath)
 	dir := v.project.AppConfigDir(appPath)
@@ -172,6 +174,9 @@ func redactSecrets(s string, secretVals map[string]string) string {
 	return s
 }
 
+// writeValidateMain writes a throwaway main.go into dir that imports the app's
+// config package and calls ultra.Load, so the app's own module type-checks and
+// runs it.
 func writeValidateMain(dir, importPath, environment string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating validation dir: %w", err)

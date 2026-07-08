@@ -15,14 +15,14 @@ import (
 	"github.com/harrisoncramer/ultra/internal/scan"
 )
 
-// Scanner reports an app's declared fields.
-type Scanner interface {
+// scanner reports an app's declared fields.
+type scanner interface {
 	Fields(dir string) ([]scan.Field, error)
 }
 
 // Linter checks each app's required keys against what its resolvers provide.
 type Linter struct {
-	scanner            Scanner
+	scanner            scanner
 	project            project.Project
 	environment        string
 	rejectUnreferenced bool
@@ -32,7 +32,7 @@ type Linter struct {
 
 // NewLinterParams are the dependencies and options NewLinter needs.
 type NewLinterParams struct {
-	Scanner            Scanner
+	Scanner            scanner
 	Project            project.Project
 	Environment        string
 	RejectUnreferenced bool

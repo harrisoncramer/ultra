@@ -75,6 +75,7 @@ type layeredSecretResolver struct {
 	override SecretResolver
 }
 
+// Resolve returns the base values with the override's merged on top.
 func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map[string]string, error) {
 	out, err := l.base.Resolve(ctx, names)
 	if err != nil {
@@ -87,13 +88,19 @@ func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map
 	if err != nil {
 		return nil, fmt.Errorf("secret override resolver: %w", err)
 	}
-	if out == nil {
-		out = make(map[string]string, len(ov))
+	return mergeOver(out, ov), nil
+}
+
+// mergeOver returns base with override's entries layered on top so the override
+// wins, tolerating a nil base.
+func mergeOver(base, override map[string]string) map[string]string {
+	if base == nil {
+		base = make(map[string]string, len(override))
 	}
-	for k, v := range ov {
-		out[k] = v
+	for k, v := range override {
+		base[k] = v
 	}
-	return out, nil
+	return base
 }
 
 // LayerSecretResolver wraps base so the override's values win, or returns base
