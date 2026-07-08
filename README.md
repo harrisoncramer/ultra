@@ -92,12 +92,15 @@ if err != nil {
 }
 ```
 
-3. Validate an app, and/or run your command with secrets injected:
+3. Generate an app's compose override, validate it, and/or run your command with secrets injected:
 
 ```bash
+ultra gen apps/worker                                                                          # writes the names-only compose override, no secret store needed
 ultra validate apps/worker --secret-resolver 1password --vault Engineering                     # fails fast if a required value is missing, or malformed
-ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # injects DATABASE_URL and starts the container
+ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # regenerates the override, injects DATABASE_URL, starts the container
 ```
+
+`gen` is a separate step only when you want the override files without the store — in CI, or to commit them. `run` regenerates them itself, so for the plain local loop you can skip straight to it.
 
 4. Optional: add an `.ultra.toml` at the repo root, naming your apps and secret store, so you can drop the flags:
 
