@@ -2,17 +2,24 @@
 
 This page explains what each command is for and when to reach for it. For the exact usage line and every flag, see [reference/](reference/ultra.md) or run `ultra <command> --help`.
 
-## gen: generating the override
+## gen: generating the compose file
 
-The compose override is references only: it maps each declared secret name onto its launcher variable and never contains a value. All the named apps go into one file, one service block per app, written to `--override-dir/--override-name` (by default `tmp/ultra.compose.override.yml`). Generating it is a static operation over each app's `Config` and needs no secret store, so `ultra run` regenerates it on every launch. To produce it without launching, for CI, a setup step, or to commit it into version control, use `ultra gen`:
+The generated compose file is references only: it maps each declared secret name onto its launcher variable and never contains a value. All the named apps go into one file, one service block per app, written to `--output-dir/--output-filename` (by default `tmp/ultra.compose.yml`). Generating it is a static operation over each app's `Config` and needs no secret store, so `ultra run` regenerates it on every launch. To produce it without launching, for CI, a setup step, or to commit it into version control, use `ultra gen`:
 
 ```bash
-ultra gen apps/server apps/worker --override-dir compose/overrides
+ultra gen apps/server apps/worker --output-dir compose/generated
 ```
 
-Because `gen` never contacts the store, it works offline, the same property that makes `lint` useful. Point `--override-dir` at a committed path to keep the file in version control; `run` writes to and reads from the same path. The override lists every secret each app declares, so it stays correct as long as the `Config` does, regardless of what the store currently holds.
+Because `gen` never contacts the store, it works offline, the same property that makes `lint` useful. Point `--output-dir` at a committed path to keep the file in version control; `run` writes to and reads from the same path. The file lists every secret each app declares, so it stays correct as long as the `Config` does, regardless of what the store currently holds.
 
-`run` chains the override onto your base compose file through `COMPOSE_FILE`. If you run `docker compose` by hand instead, either reference it explicitly (`docker compose -f docker-compose.yml -f tmp/ultra.compose.override.yml up`) or pass `--override-name docker-compose.override.yml` so compose auto-loads it next to the base file. The default name avoids that auto-load so it never clobbers a hand-written `docker-compose.override.yml`.
+Pass `--compose-file` to scope the output to one stack. gen then writes a service block only for apps whose service the given compose file defines, so the result merges cleanly onto a subset stack (for example a sandbox that runs fewer services). Generate one file per stack:
+
+```bash
+ultra gen --compose-file docker-compose.yml          --output-filename local.compose.yml
+ultra gen --compose-file docker-compose.sandbox.yml  --output-filename sandbox.compose.yml
+```
+
+`run` chains the file onto your base compose file through `COMPOSE_FILE`. If you run `docker compose` by hand instead, either reference it explicitly (`docker compose -f docker-compose.yml -f tmp/ultra.compose.yml up`) or pass `--output-filename docker-compose.override.yml` so compose auto-loads it next to the base file. The default name avoids that auto-load so it never clobbers a hand-written `docker-compose.override.yml`.
 
 ## run
 

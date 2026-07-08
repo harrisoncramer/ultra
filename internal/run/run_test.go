@@ -17,14 +17,14 @@ import (
 
 // newTestRunner builds a Runner backed by a real generator over the fake scanner
 // and composer, so tests exercise the actual override generation.
-func newTestRunner(root, overrideDir, composeFile string, names []string) *Runner {
+func newTestRunner(root, outputDir, composeFile string, names []string) *Runner {
 	proj := project.Project{Root: root, ConfigDir: "config"}
 	return NewRunner(NewRunnerParams{
 		Generator: gen.NewGenerator(gen.NewGeneratorParams{
-			Scanner:     fakeScanner{names: names},
-			Composer:    fakeComposer{},
-			Project:     proj,
-			OverrideDir: overrideDir,
+			Scanner:   fakeScanner{names: names},
+			Composer:  fakeComposer{},
+			Project:   proj,
+			OutputDir: outputDir,
 		}),
 		Composer:    fakeComposer{},
 		Project:     proj,
@@ -80,7 +80,7 @@ type prepareCase struct {
 	name        string
 	names       []string          // secret names the fake scanner reports
 	resolved    map[string]string // what the stub resolver returns
-	overrideDir string            // "" = default "tmp"
+	outputDir   string            // "" = default "tmp"
 	composeFile string            // "" = default "docker-compose.yml"
 
 	wantOverride     bool
@@ -109,17 +109,17 @@ func TestPrepare(t *testing.T) {
 			wantContains: []string{"MISSING:"},
 		},
 		{
-			name:         "honors a configured override dir",
+			name:         "honors a configured output dir",
 			names:        []string{"RESOLVED"},
 			resolved:     map[string]string{"RESOLVED": "value"},
-			overrideDir:  "ultra/overrides",
+			outputDir:    "ultra/overrides",
 			wantOverride: true,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
-			runner := newTestRunner(root, c.overrideDir, c.composeFile, c.names)
+			runner := newTestRunner(root, c.outputDir, c.composeFile, c.names)
 
 			prep, err := runner.prepare(context.Background(), Params{
 				Apps:        []string{"app"},
@@ -136,11 +136,11 @@ func TestPrepare(t *testing.T) {
 				}
 			}
 
-			dir := c.overrideDir
+			dir := c.outputDir
 			if dir == "" {
 				dir = "tmp"
 			}
-			override := filepath.Join(root, dir, "ultra.compose.override.yml")
+			override := filepath.Join(root, dir, "ultra.compose.yml")
 			data, err := os.ReadFile(override)
 			if !c.wantOverride {
 				assert.ErrorIs(t, err, os.ErrNotExist)
@@ -180,6 +180,6 @@ func TestRunKeepsOverrideAfterExit(t *testing.T) {
 		Command:     []string{"true"},
 	})
 	require.NoError(t, err)
-	_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.override.yml"))
+	_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.yml"))
 	assert.NoError(t, statErr, "override should be kept after run")
 }

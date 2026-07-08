@@ -37,11 +37,11 @@ func Execute() error {
 }
 
 type sharedFlags struct {
-	root         string
-	configDir    string
-	configFile   string
-	overrideDir  string
-	overrideName string
+	root           string
+	configDir      string
+	configFile     string
+	outputDir      string
+	outputFilename string
 }
 
 func (s *sharedFlags) project() project.Project {
@@ -72,19 +72,24 @@ func newRootCmd(fc fileConfig) *cobra.Command {
 
 func newGenCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
+	var composeFile string
 
 	cmd := &cobra.Command{
 		Use:   "gen [app-path...] [flags]",
-		Short: "Generate the single compose override for the given apps without resolving secrets",
-		Long: "gen writes one names-only docker compose override, the file that maps every\n" +
-			"secret each app's Config declares onto its namespaced launcher variable, one\n" +
-			"service block per app, into --override-dir/--override-name. It reads only the\n" +
-			"apps' config packages and never contacts the secret store, so it works offline\n" +
-			"and its output can be committed and reused by run. Apps are the directories\n" +
-			"given as arguments, or those listed in .ultra.toml when none are given.",
+		Short: "Generate the single compose file for the given apps without resolving secrets",
+		Long: "gen writes one names-only docker compose file, mapping every secret each app's\n" +
+			"Config declares onto its namespaced launcher variable, one service block per\n" +
+			"app, into --output-dir/--output-filename. It reads only the apps' config\n" +
+			"packages and never contacts the secret store, so it works offline and its\n" +
+			"output can be committed and reused by run. Apps are the directories given as\n" +
+			"arguments, or those listed in .ultra.toml when none are given.\n\n" +
+			"Pass --compose-file to scope the output to one stack: gen then writes a service\n" +
+			"block only for apps whose service the given compose file defines, so the result\n" +
+			"merges cleanly onto a subset stack. Generate one file per stack this way.",
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
+	cmd.Flags().StringVar(&composeFile, "compose-file", "", "scope the output to the services this compose file defines, relative to --root (default: every app)")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := applyConfigDefaults(cmd, fc); err != nil {
@@ -94,12 +99,19 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 		if len(apps) == 0 {
 			return fmt.Errorf("no apps given: pass app paths or set apps in .ultra.toml")
 		}
+		if composeFile != "" {
+			scoped, err := scopeAppsToCompose(apps, filepath.Join(shared.root, composeFile), shared.project())
+			if err != nil {
+				return err
+			}
+			apps = scoped
+		}
 		result, err := gen.NewGenerator(gen.NewGeneratorParams{
-			Scanner:      scan.NewScanner(),
-			Composer:     compose.NewComposer(),
-			Project:      shared.project(),
-			OverrideDir:  shared.overrideDir,
-			OverrideName: shared.overrideName,
+			Scanner:        scan.NewScanner(),
+			Composer:       compose.NewComposer(),
+			Project:        shared.project(),
+			OutputDir:      shared.outputDir,
+			OutputFilename: shared.outputFilename,
 		}).Generate(apps)
 		if err != nil {
 			return err
@@ -112,16 +124,38 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 			fmt.Fprintf(os.Stderr, "ultra: %s contributed %d secrets\n", o.App, len(o.Names))
 		}
 		if result.Path == "" {
-			fmt.Fprintln(os.Stderr, "ultra: no app declares a secret, no override written")
+			fmt.Fprintln(os.Stderr, "ultra: no app declares a secret, no file written")
 			return nil
 		}
 		base := filepath.Join(shared.root, "docker-compose.yml")
+		if composeFile != "" {
+			base = filepath.Join(shared.root, composeFile)
+		}
 		chain := strings.Join([]string{base, result.Path}, string(os.PathListSeparator))
 		fmt.Fprintf(os.Stderr, "ultra: wrote %s\n", result.Path)
 		fmt.Fprintf(os.Stderr, "ultra: run compose with COMPOSE_FILE=%s (or docker compose -f %s -f %s)\n", chain, base, result.Path)
 		return nil
 	}
 	return cmd
+}
+
+// scopeAppsToCompose keeps only the app paths whose service name the compose file
+// at path defines, and reports each app it drops. It lets gen produce a file that
+// merges cleanly onto a subset stack, such as a sandbox that runs fewer services.
+func scopeAppsToCompose(apps []string, path string, proj project.Project) ([]string, error) {
+	services, err := compose.ServiceNames(path)
+	if err != nil {
+		return nil, err
+	}
+	scoped := make([]string, 0, len(apps))
+	for _, appPath := range apps {
+		if services[proj.AppName(appPath)] {
+			scoped = append(scoped, appPath)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "ultra: %s has no service in %s, skipped\n", proj.AppName(appPath), path)
+	}
+	return scoped, nil
 }
 
 func newRunCmd(fc fileConfig) *cobra.Command {
@@ -161,11 +195,11 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		}
 		runner := run.NewRunner(run.NewRunnerParams{
 			Generator: gen.NewGenerator(gen.NewGeneratorParams{
-				Scanner:      scan.NewScanner(),
-				Composer:     compose.NewComposer(),
-				Project:      shared.project(),
-				OverrideDir:  shared.overrideDir,
-				OverrideName: shared.overrideName,
+				Scanner:        scan.NewScanner(),
+				Composer:       compose.NewComposer(),
+				Project:        shared.project(),
+				OutputDir:      shared.outputDir,
+				OutputFilename: shared.outputFilename,
 			}),
 			Composer:    compose.NewComposer(),
 			Project:     shared.project(),
@@ -304,8 +338,8 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
 	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
 	cmd.Flags().StringVar(&shared.configFile, "config-file", "", "path to the ultra config file (default "+configFileName+" under --root)")
-	cmd.Flags().StringVar(&shared.overrideDir, "override-dir", "tmp", "directory under --root the generated compose override is written to; point it at a committed path to keep it in version control")
-	cmd.Flags().StringVar(&shared.overrideName, "override-name", "ultra.compose.override.yml", "file name of the generated compose override under --override-dir; set it to docker-compose.override.yml to have compose auto-load it")
+	cmd.Flags().StringVar(&shared.outputDir, "output-dir", "tmp", "directory under --root the generated compose file is written to; point it at a committed path to keep it in version control")
+	cmd.Flags().StringVar(&shared.outputFilename, "output-filename", "ultra.compose.yml", "file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args

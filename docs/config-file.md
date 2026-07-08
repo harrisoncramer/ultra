@@ -6,8 +6,8 @@ To reduce arguments and flags, ultra supports an optional `.ultra.toml` at the r
 apps = ["apps/server", "apps/worker"] # The apps to manage when none are named on the command line, plus shared flags.
 root = "."                        # --root: repo root the compose file is anchored to
 config-dir = "config"             # --config-dir: config package dir under each app path (e.g. pkg/config)
-override-dir = "tmp"              # --override-dir: dir under --root the generated compose override is written to; point at a committed path to keep it in version control
-override-name = "ultra.compose.override.yml" # --override-name: file name of the generated override; set to docker-compose.override.yml for compose to auto-load it
+output-dir = "tmp"                # --output-dir: dir under --root the generated compose file is written to; point at a committed path to keep it in version control
+output-filename = "ultra.compose.yml" # --output-filename: file name of the generated compose file; set to docker-compose.override.yml for compose to auto-load it
 compose-file = "docker-compose.yml" # --compose-file: the compose file run and the docker-compose resolver target, relative to --root
 
 [secrets]
