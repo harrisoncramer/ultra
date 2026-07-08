@@ -6,103 +6,35 @@
 // unit tests it exercises the parts that shell out — the docker-compose config
 // resolver, run's container launch, validate's generated go program — so a break
 // in that wiring is caught. It is behind the integration build tag and needs
-// docker for every case except gen.
+// docker for every scenario except gen.
 package integration
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-var (
-	repoRoot  string
-	binPath   string
-	templates = map[string]string{}
-	store     *redisStore
-)
+// TestIntegration builds one rig and runs every scenario against it as a
+// subtest. The scenarios share the rig's store and run sequentially, so none of
+// them calls t.Parallel.
+func TestIntegration(t *testing.T) {
+	r := newRig(t)
 
-// fixtures materialized once as tidied templates, then copied per test.
-var fixtureNames = []string{"single-app", "multi-app", "scoped-envs"}
-
-func TestMain(m *testing.M) {
-	os.Exit(runMain(m))
+	t.Run("gen lists all declared secrets offline", r.genListsAllDeclaredSecrets)
+	t.Run("run injects resolved secrets into a container", r.runInjectsResolvedSecrets)
+	t.Run("run leaves an unresolved secret empty", r.runLeavesUnresolvedSecretEmpty)
+	t.Run("run namespaces a shared secret per app", r.runNamespacesSecretsPerApp)
+	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
+	t.Run("validate enforces env-scoped required", r.validateEnvScopedRequired)
+	t.Run("lint flags a hardcoded secret", r.lintFlagsHardcodedSecret)
 }
 
-// runMain builds the harness and fixture templates once and, when docker is
-// present, starts the store. It exists so the deferred cleanup isn't skipped by
-// os.Exit in TestMain.
-func runMain(m *testing.M) int {
-	tmp, err := os.MkdirTemp("", "ultra-it")
-	if err != nil {
-		panic(err)
-	}
-	defer os.RemoveAll(tmp)
-
-	if repoRoot, err = filepath.Abs(filepath.Join("..", "..")); err != nil {
-		panic(err)
-	}
-
-	binPath = filepath.Join(tmp, "ultra-harness")
-	if out, err := buildHarness(binPath); err != nil {
-		panic("building harness: " + err.Error() + "\n" + out)
-	}
-
-	for _, name := range fixtureNames {
-		dir := filepath.Join(tmp, "templates", name)
-		if err := prepareTemplate(name, dir); err != nil {
-			panic("preparing fixture " + name + ": " + err.Error())
-		}
-		templates[name] = dir
-	}
-
-	if dockerReady() {
-		store, err = startRedisStore()
-		if err != nil {
-			panic("starting store: " + err.Error())
-		}
-		defer store.Close()
-	}
-
-	return m.Run()
-}
-
-func buildHarness(out string) (string, error) {
-	cmd := exec.Command("go", "build", "-tags", "integration", "-o", out, "./test/integration/harness")
-	cmd.Dir = repoRoot
-	b, err := cmd.CombinedOutput()
-	return string(b), err
-}
-
-func dockerReady() bool {
-	return exec.Command("docker", "compose", "version").Run() == nil
-}
-
-// requireStore skips a test when the store isn't up, and flushes it so no key
-// leaks in from a prior scenario.
-func requireStore(t *testing.T) *redisStore {
-	t.Helper()
-	if store == nil {
-		t.Skip("docker/store not available")
-	}
-	store.flush()
-	return store
-}
-
-// composeDown tears down an app's compose project after a run brings it up.
-func composeDown(f *fixture, app string) {
-	_ = exec.Command("docker", "compose",
-		"-f", filepath.Join(f.root, "docker-compose.yml"),
-		"-f", f.overridePath(app),
-		"down", "-v", "--remove-orphans").Run()
-}
-
-func TestGenListsAllDeclaredSecretsOffline(t *testing.T) {
+func (r *Rig) genListsAllDeclaredSecrets(t *testing.T) {
 	// gen needs neither docker nor the store: it is a static scan of the config.
-	f := openFixture(t, "single-app")
-	res := ultra(t, "gen", "apps/worker", "--root", f.root, "--override-dir", "genout")
+	f := r.openFixture(t, "single-app")
+	res := r.ultra(t, "gen", "apps/worker", "--root", f.root, "--override-dir", "genout")
 	if !res.ok() {
 		t.Fatalf("gen failed:\n%s", res.output)
 	}
@@ -122,10 +54,10 @@ func TestGenListsAllDeclaredSecretsOffline(t *testing.T) {
 	}
 }
 
-func TestRunInjectsResolvedSecrets(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "single-app")
-	t.Cleanup(func() { composeDown(f, "worker") })
+func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	t.Cleanup(func() { r.composeDown(f, "worker") })
 
 	if err := s.Seed("worker", map[string]string{
 		"IT_DB_URL":  "postgres://run-it",
@@ -136,7 +68,7 @@ func TestRunInjectsResolvedSecrets(t *testing.T) {
 
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
-	res := ultra(t, args...)
+	res := r.ultra(t, args...)
 	if !res.ok() {
 		t.Fatalf("run failed:\n%s", res.output)
 	}
@@ -147,10 +79,10 @@ func TestRunInjectsResolvedSecrets(t *testing.T) {
 	}
 }
 
-func TestRunLeavesUnresolvedSecretEmpty(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "single-app")
-	t.Cleanup(func() { composeDown(f, "worker") })
+func (r *Rig) runLeavesUnresolvedSecretEmpty(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	t.Cleanup(func() { r.composeDown(f, "worker") })
 
 	// Only one of the two declared secrets is in the store.
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://only-db"}); err != nil {
@@ -159,7 +91,7 @@ func TestRunLeavesUnresolvedSecretEmpty(t *testing.T) {
 
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
-	res := ultra(t, args...)
+	res := r.ultra(t, args...)
 	if !res.ok() {
 		t.Fatalf("run failed:\n%s", res.output)
 	}
@@ -173,9 +105,9 @@ func TestRunLeavesUnresolvedSecretEmpty(t *testing.T) {
 	}
 }
 
-func TestRunNamespacesSecretsPerApp(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "multi-app")
+func (r *Rig) runNamespacesSecretsPerApp(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "multi-app")
 
 	if err := s.Seed("server", map[string]string{"DATABASE_URL": "srv-db", "SERVER_TOKEN": "st"}); err != nil {
 		t.Fatal(err)
@@ -186,7 +118,7 @@ func TestRunNamespacesSecretsPerApp(t *testing.T) {
 
 	args := append([]string{"run", "apps/server", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "true")
-	res := ultra(t, args...)
+	res := r.ultra(t, args...)
 	if !res.ok() {
 		t.Fatalf("run failed:\n%s", res.output)
 	}
@@ -202,15 +134,15 @@ func TestRunNamespacesSecretsPerApp(t *testing.T) {
 	}
 }
 
-func TestValidatePassesAndFails(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "single-app")
+func (r *Rig) validatePassesAndFails(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	args := append([]string{"validate", "apps/worker", "--root", f.root}, s.addrFlags()...)
 
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": "k"}); err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"validate", "apps/worker", "--root", f.root}, s.addrFlags()...)
-	if res := ultra(t, args...); !res.ok() {
+	if res := r.ultra(t, args...); !res.ok() {
 		t.Fatalf("validate should pass with all secrets present:\n%s", res.output)
 	}
 
@@ -218,7 +150,7 @@ func TestValidatePassesAndFails(t *testing.T) {
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it"}); err != nil {
 		t.Fatal(err)
 	}
-	res := ultra(t, args...)
+	res := r.ultra(t, args...)
 	if res.ok() {
 		t.Fatalf("validate should fail when a required secret is missing:\n%s", res.output)
 	}
@@ -227,9 +159,9 @@ func TestValidatePassesAndFails(t *testing.T) {
 	}
 }
 
-func TestValidateEnvScopedRequired(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "scoped-envs")
+func (r *Rig) validateEnvScopedRequired(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "scoped-envs")
 	base := append([]string{"validate", "apps/api", "--root", f.root}, s.addrFlags()...)
 
 	t.Run("production enforces the prod-scoped secret", func(t *testing.T) {
@@ -237,7 +169,7 @@ func TestValidateEnvScopedRequired(t *testing.T) {
 		if err := s.Seed("api", map[string]string{"IT_ALWAYS": "a"}); err != nil {
 			t.Fatal(err)
 		}
-		res := ultra(t, append(base, "--env", "production")...)
+		res := r.ultra(t, append(base, "--env", "production")...)
 		if res.ok() {
 			t.Fatalf("expected failure for missing IT_PROD:\n%s", res.output)
 		}
@@ -251,27 +183,25 @@ func TestValidateEnvScopedRequired(t *testing.T) {
 		if err := s.Seed("api", map[string]string{"IT_ALWAYS": "a", "IT_LOCAL": "l"}); err != nil {
 			t.Fatal(err)
 		}
-		if res := ultra(t, append(base, "--env", "local")...); !res.ok() {
+		if res := r.ultra(t, append(base, "--env", "local")...); !res.ok() {
 			t.Fatalf("local should not require IT_PROD:\n%s", res.output)
 		}
 	})
 }
 
-func TestLintFlagsHardcodedSecret(t *testing.T) {
-	s := requireStore(t)
-	f := openFixture(t, "single-app")
+func (r *Rig) lintFlagsHardcodedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": "k"}); err != nil {
 		t.Fatal(err)
 	}
-
 	args := append([]string{"lint", "apps/worker", "--root", f.root}, s.addrFlags()...)
 
-	clean := ultra(t, args...)
-	if !clean.ok() {
+	if clean := r.ultra(t, args...); !clean.ok() {
 		t.Fatalf("lint should pass on the clean compose file:\n%s", clean.output)
 	}
 
-	leak := ultra(t, append(args, "--compose-file", "docker-compose.leak.yml")...)
+	leak := r.ultra(t, append(args, "--compose-file", "docker-compose.leak.yml")...)
 	if leak.ok() {
 		t.Fatalf("lint should fail on a hardcoded secret:\n%s", leak.output)
 	}

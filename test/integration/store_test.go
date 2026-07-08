@@ -56,7 +56,7 @@ func startRedisStore() (*redisStore, error) {
 		time.Sleep(300 * time.Millisecond)
 	}
 	s.Close()
-	return nil, fmt.Errorf("redis did not become ready: %v", last)
+	return nil, fmt.Errorf("redis did not become ready: %w", last)
 }
 
 // hostPort returns the host address the container's 6379 port is published on,

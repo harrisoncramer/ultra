@@ -17,17 +17,13 @@ type fixture struct {
 	root string
 }
 
-// openFixture copies a prepared template of the named testdata project into a
-// fresh temp dir, so each test gets its own writable tree (overrides, generated
-// programs) without disturbing others.
-func openFixture(t *testing.T, name string) *fixture {
+// newFixture copies a prepared template into a fresh temp dir, so each scenario
+// gets its own writable tree (overrides, generated programs) without disturbing
+// others.
+func newFixture(t *testing.T, template string) *fixture {
 	t.Helper()
-	tmpl, ok := templates[name]
-	if !ok {
-		t.Fatalf("unknown fixture %q", name)
-	}
-	root := filepath.Join(t.TempDir(), name)
-	if err := copyTree(tmpl, root); err != nil {
+	root := filepath.Join(t.TempDir(), filepath.Base(template))
+	if err := copyTree(template, root); err != nil {
 		t.Fatalf("copying fixture: %v", err)
 	}
 	return &fixture{root: root}
@@ -39,9 +35,9 @@ func (f *fixture) overridePath(app string) string {
 }
 
 // prepareTemplate copies a testdata project into dir, points its ultra
-// dependency at the local checkout, and tidies it once so per-test copies don't
-// each pay for a module resolution.
-func prepareTemplate(name, dir string) error {
+// dependency at the local checkout, and tidies it once so per-scenario copies
+// don't each pay for a module resolution.
+func prepareTemplate(repoRoot, name, dir string) error {
 	if err := copyTree(filepath.Join("testdata", name), dir); err != nil {
 		return err
 	}
