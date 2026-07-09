@@ -38,6 +38,7 @@ func TestSecretNames(t *testing.T) {
 		{name: "flat", fixture: "flat", want: []string{"SECRET_TOKEN"}},
 		{name: "embedded and nested", fixture: "composed", want: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"}},
 		{name: "cross-package sub-struct", fixture: "crosspkg", want: []string{"LOCAL_TOKEN", "SUB_TOKEN"}},
+		{name: "envPrefix stacks, and a reused type gets each prefix", fixture: "prefixed", want: []string{"ADDR", "DB_PASSWORD", "REPLICA_PASSWORD", "ROOT_SECRET", "SVC_TOKEN"}},
 		{name: "unexported field is skipped like env.Parse", fixture: "unexported", want: []string{"PUBLIC_TOKEN"}},
 		{name: "no exported Config struct errors", fixture: "noconfig", wantErr: true},
 	}
@@ -73,6 +74,9 @@ func TestFields(t *testing.T) {
 		{"scoped field-level override wins", "scoped", "OVERRIDE", []string{"staging"}, false},
 		{"scoped local-scoped field", "scoped", "LOCAL_URL", []string{"local"}, false},
 		{"scoped optional field", "scoped", "OPTIONAL", nil, false},
+		{"prefixed non-secret carries its prefix", "prefixed", "DB_HOST", nil, false},
+		{"reused type under a second prefix", "prefixed", "REPLICA_PASSWORD", nil, true},
+		{"embedded struct stacks its prefix", "prefixed", "SVC_TOKEN", nil, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

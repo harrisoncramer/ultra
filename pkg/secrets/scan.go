@@ -10,9 +10,17 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// visitKey identifies a struct reached at a given env-var prefix. The scan's
+// recursion guard keys on it so the same struct type under different envPrefix
+// values is scanned once per prefix, while a self-referential type terminates.
+type visitKey struct {
+	s      *types.Struct
+	prefix string
+}
+
 // Field is one env-var field reachable from a Config struct.
 type Field struct {
-	Name         string   // env-var name (the part before the first comma of the env tag)
+	Name         string   // env-var name the app reads: any accumulated envPrefix plus the part before the first comma of the env tag
 	Secret       bool     // the field is tagged secret:"true"
 	RequiredEnvs []string // environments the field is required in (from the required tag, own or inherited); "*" means all, nil means never
 }
@@ -45,14 +53,18 @@ func Fields(dir string) ([]Field, error) {
 	var fields []Field
 	var badEnvTag []string
 	seen := map[string]struct{}{}
-	visited := map[*types.Struct]bool{}
+	visited := map[visitKey]bool{}
 
-	var visit func(s *types.Struct, inherited []string)
-	visit = func(s *types.Struct, inherited []string) {
-		if visited[s] {
+	var visit func(s *types.Struct, prefix string, inherited []string)
+	visit = func(s *types.Struct, prefix string, inherited []string) {
+		// Key the recursion guard on the prefix as well as the struct: the same
+		// struct type reached under two different envPrefix values (e.g. DB_ and
+		// CACHE_) yields distinct env names and must be visited once per prefix,
+		// while a self-referential type at one prefix still terminates.
+		if visited[visitKey{s, prefix}] {
 			return
 		}
-		visited[s] = true
+		visited[visitKey{s, prefix}] = true
 		for i := 0; i < s.NumFields(); i++ {
 			// env.Parse skips fields it can't set, so an unexported field is never
 			// populated at runtime; treat it as not declared here too, rather than
@@ -69,15 +81,20 @@ func Fields(dir string) ([]Field, error) {
 				requiredEnvs = splitEnvs(r)
 			}
 			// Recurse into struct-typed fields (embedded or named), mirroring how
-			// env.Parse descends into them. Type info resolves them uniformly, so
-			// a sub-struct from another package is followed just like a local one.
+			// env.Parse descends into them. A struct field's envPrefix stacks on
+			// top of the prefix already accumulated, so nested env vars carry the
+			// full prefix env.Parse reads them under. Type info resolves sub-structs
+			// uniformly, so one from another package is followed just like a local one.
 			if child := structUnder(s.Field(i).Type()); child != nil {
-				visit(child, requiredEnvs)
+				visit(child, prefix+tag.Get("envPrefix"), requiredEnvs)
 			}
 			name, opts, _ := strings.Cut(tag.Get("env"), ",")
 			if name == "" {
 				continue
 			}
+			// The launcher variable and the app's env.Parse must agree on the name,
+			// so record the prefixed name, the one the app actually reads.
+			name = prefix + name
 			if hasOption(opts, "required") || hasOption(opts, "notEmpty") {
 				badEnvTag = append(badEnvTag, name)
 				continue
@@ -93,7 +110,7 @@ func Fields(dir string) ([]Field, error) {
 			})
 		}
 	}
-	visit(st, nil)
+	visit(st, "", nil)
 
 	if len(badEnvTag) > 0 {
 		sort.Strings(badEnvTag)
@@ -212,20 +229,26 @@ func structUnder(t types.Type) *types.Struct {
 func SecretEnvNames(t reflect.Type) []string {
 	var names []string
 	seen := map[string]struct{}{}
-	visited := map[reflect.Type]bool{}
+	type key struct {
+		t      reflect.Type
+		prefix string
+	}
+	visited := map[key]bool{}
 
-	var visit func(t reflect.Type)
-	visit = func(t reflect.Type) {
+	var visit func(t reflect.Type, prefix string)
+	visit = func(t reflect.Type, prefix string) {
 		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
-		if t.Kind() != reflect.Struct || visited[t] {
+		if t.Kind() != reflect.Struct || visited[key{t, prefix}] {
 			return
 		}
-		visited[t] = true
+		visited[key{t, prefix}] = true
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
-			visit(f.Type)
+			// A struct field's envPrefix stacks on the accumulated prefix, so nested
+			// secrets carry the full name env.Parse reads them under.
+			visit(f.Type, prefix+f.Tag.Get("envPrefix"))
 			if f.Tag.Get("secret") != "true" {
 				continue
 			}
@@ -233,6 +256,7 @@ func SecretEnvNames(t reflect.Type) []string {
 			if name == "" {
 				continue
 			}
+			name = prefix + name
 			if _, dup := seen[name]; dup {
 				continue
 			}
@@ -240,7 +264,7 @@ func SecretEnvNames(t reflect.Type) []string {
 			names = append(names, name)
 		}
 	}
-	visit(t)
+	visit(t, "")
 
 	return names
 }
