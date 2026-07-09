@@ -16,6 +16,7 @@ import (
 	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -101,6 +102,13 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 		return nil, err
 	}
 
+	// Verify the committed override before touching the secret store, so a stale
+	// or missing file fails fast with no store round-trips.
+	composeFiles, err := r.overrideComposeFiles(overrides)
+	if err != nil {
+		return nil, err
+	}
+
 	// Each app's secret store round-trip is independent, so fire them all off
 	// concurrently and let the errgroup cancel the rest on the first store-level
 	// failure. Results land in per-app slots so the merged env stays in the apps'
@@ -143,20 +151,6 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	}
 
 	env := os.Environ()
-	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
-
-	// If any app declares a secret, the override gen wrote is what forwards those
-	// secrets into containers, so it must already exist; run points at it rather
-	// than writing it. With no declared secrets there is nothing to forward.
-	if declaresSecret(overrides) {
-		if r.overridePath == "" {
-			return nil, fmt.Errorf("no override path configured; run `ultra gen` first")
-		}
-		if _, err := os.Stat(r.overridePath); err != nil {
-			return nil, fmt.Errorf("secret override %s not found; run `ultra gen` first: %w", r.overridePath, err)
-		}
-		composeFiles = append(composeFiles, r.overridePath)
-	}
 
 	for i := range overrides {
 		env = append(env, results[i].envVars...)
@@ -167,6 +161,39 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 
 	env = append(env, "COMPOSE_FILE="+strings.Join(composeFiles, string(os.PathListSeparator)))
 	return &prepared{env: env, composeFiles: composeFiles}, nil
+}
+
+// overrideComposeFiles returns the base compose file plus, when any app declares
+// a secret, the committed override gen wrote. It requires that override to exist
+// and still match the current Config: a declared secret whose fingerprint the
+// override doesn't carry would be resolved into the env but never forwarded, so
+// run fails loudly rather than dropping it silently. It never contacts the store.
+func (r *Runner) overrideComposeFiles(overrides []configreader.AppOutput) ([]string, error) {
+	files := []string{filepath.Join(r.project.Root, r.composeFile)}
+	if !declaresSecret(overrides) {
+		return files, nil
+	}
+	if r.overridePath == "" {
+		return nil, fmt.Errorf("no override path configured; run `ultra gen` first")
+	}
+	data, err := os.ReadFile(r.overridePath)
+	if err != nil {
+		return nil, fmt.Errorf("secret override %s not found; run `ultra gen` first: %w", r.overridePath, err)
+	}
+	fingerprints := pkgcompose.ParseFingerprints(string(data))
+	var stale []string
+	for _, o := range overrides {
+		if len(o.Names) == 0 {
+			continue
+		}
+		if fingerprints[o.App] != pkgcompose.Fingerprint(o.Names) {
+			stale = append(stale, o.App)
+		}
+	}
+	if len(stale) > 0 {
+		return nil, fmt.Errorf("secret override %s is stale for %s; run `ultra gen`", r.overridePath, strings.Join(stale, ", "))
+	}
+	return append(files, r.overridePath), nil
 }
 
 // declaresSecret reports whether any app declares at least one secret.

@@ -33,6 +33,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("run injects a value with special characters verbatim", r.runInjectsSpecialCharValue)
 	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
 	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
+	t.Run("run rejects a stale override", r.runRejectsStaleOverride)
 	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
 	t.Run("gen honors a custom config dir", r.genHonorsConfigDir)
 	t.Run("config file supplies defaults the command line overrides", r.configFilePrecedence)
@@ -338,6 +339,30 @@ func (r *Rig) runSkipsAppWithoutSecrets(t *testing.T) {
 		t.Errorf("reading combined override: %v", err)
 	} else if strings.Contains(string(data), "nosec:") {
 		t.Errorf("an app with no secrets should get no service block:\n%s", data)
+	}
+}
+
+func (r *Rig) runRejectsStaleOverride(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "multi-app")
+
+	if err := s.Seed("worker", map[string]string{"DATABASE_URL": "wrk", "WORKER_TOKEN": "wt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// gen only covers server, so the committed override carries no bindings for
+	// worker. Running worker against it must fail: worker's secrets would resolve
+	// but never reach the container, exactly the drift the fingerprint guards.
+	r.genOverride(t, f, "apps/server")
+
+	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "true")
+	res := r.ultra(t, args...)
+	if res.ok() {
+		t.Fatalf("run should reject an override that doesn't cover worker:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "stale") || !strings.Contains(res.output, "worker") {
+		t.Errorf("expected a stale-override error naming worker:\n%s", res.output)
 	}
 }
 

@@ -4,12 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,12 +65,16 @@ func hasEnv(env []string, key, val string) bool {
 	return false
 }
 
-// writeOverride simulates gen having already written the committed override at
-// path, so run has a file to point COMPOSE_FILE at.
-func writeOverride(t *testing.T, path string) {
+// writeOverride simulates gen having written the committed override for app with
+// the given secret names, including gen's fingerprint header, so run's staleness
+// check sees a current file to point COMPOSE_FILE at.
+func writeOverride(t *testing.T, path, app string, names []string) {
 	t.Helper()
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(t, os.WriteFile(path, []byte("services: {}\n"), 0o644))
+	content := pkgcompose.ComposeOverride([]pkgcompose.AppSecrets{{App: app, Names: sorted}})
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
 
 // TestPrepareResolvesAndPointsAtOverride: with the committed override present,
@@ -77,7 +83,7 @@ func writeOverride(t *testing.T, path string) {
 func TestPrepareResolvesAndPointsAtOverride(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override)
+	writeOverride(t, override, "app", []string{"RESOLVED", "MISSING"})
 	before, err := os.ReadFile(override)
 	require.NoError(t, err)
 
@@ -117,6 +123,25 @@ func TestPrepareErrorsWhenOverrideMissing(t *testing.T) {
 	assert.ErrorIs(t, statErr, os.ErrNotExist, "run must not write the override")
 }
 
+// TestPrepareErrorsWhenOverrideStale: the override exists but its fingerprint
+// doesn't match the app's current declared secrets, so run refuses rather than
+// silently resolving a secret the stale file has no binding for.
+func TestPrepareErrorsWhenOverrideStale(t *testing.T) {
+	root := t.TempDir()
+	override := filepath.Join(root, "tmp", "ultra.compose.yml")
+	// The committed override was generated for a different secret set.
+	writeOverride(t, override, "app", []string{"OLD_SECRET"})
+
+	runner := newTestRunner(root, "", override, []string{"RESOLVED"})
+	_, err := runner.prepare(context.Background(), Params{
+		Apps:        []string{"app"},
+		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stale")
+	assert.Contains(t, err.Error(), "ultra gen")
+}
+
 // TestPrepareNoSecretsSkipsOverride: an app that declares no secrets needs no
 // override, so prepare succeeds with only the base compose and requires no file.
 func TestPrepareNoSecretsSkipsOverride(t *testing.T) {
@@ -140,7 +165,7 @@ func TestPrepareNoSecretsSkipsOverride(t *testing.T) {
 func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override)
+	writeOverride(t, override, "app", []string{"RESOLVED"})
 
 	runner := newTestRunner(root, "docker-compose.lake.yml", override, []string{"RESOLVED"})
 	prep, err := runner.prepare(context.Background(), Params{
@@ -156,7 +181,7 @@ func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 func TestRunWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override)
+	writeOverride(t, override, "app", []string{"RESOLVED"})
 	before, err := os.ReadFile(override)
 	require.NoError(t, err)
 

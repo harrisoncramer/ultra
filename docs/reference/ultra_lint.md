@@ -4,14 +4,11 @@ Statically check each app has no required key its resolvers won't provide
 
 ### Synopsis
 
-lint checks that every required config key an app declares is provided:
-secrets by --secret-resolver, non-secret config by --config-resolver, by
-comparing the declared keys against the keys those resolvers offer. Unlike
-validate it never parses values or runs the app's config, so it works where
-the real secret values aren't reachable, such as CI with a resolver that
-reads declared keys from deployment manifests. Apps are the directories
-given as arguments, or those in .ultra.toml when none are given. It reports
-each app and exits non-zero if any required key is unprovided.
+The lint command checks that every required config key an app declares is
+provided, without resolving or parsing any values. Because it never reads a
+value, it works where the real secrets aren't reachable, like CI. It exits
+non-zero if a required key is missing. However, it does not validate that the secrets
+themselves are present in the secret provider, like validate does.
 
 ```
 ultra lint [app-path...] --secret-resolver <name> [flags]
