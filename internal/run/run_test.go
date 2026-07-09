@@ -187,3 +187,14 @@ func TestRunRegeneratesOverride(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(root, "tmp", "ultra.compose.yml"))
 	assert.NoError(t, statErr, "run regenerates the override on each launch")
 }
+
+func TestRunRejectsEmptyCommand(t *testing.T) {
+	runner := newTestRunner(t.TempDir(), "", "", []string{"RESOLVED"})
+	err := runner.Run(context.Background(), Params{
+		Apps:        []string{"app"},
+		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
+		Command:     nil,
+	})
+	require.Error(t, err, "an empty command must error, not panic on Command[0]")
+	assert.Contains(t, err.Error(), "no command to run")
+}

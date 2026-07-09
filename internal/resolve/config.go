@@ -182,8 +182,8 @@ func (d *dockerComposeConfig) Resolve(ctx context.Context, app string) (map[stri
 
 // LeakedSecrets reports which of names carry a literal value in the compose file,
 // a secret hardcoded in non-secret config rather than resolved from the store.
-// It reads with --no-interpolate so an entry that forwards a variable (contains
-// ${...}) reads as a reference and is not flagged, only a real pasted value is.
+// It reads with --no-interpolate so an entry that forwards a variable (${VAR} or
+// $VAR) reads as a reference and is not flagged, only a real pasted value is.
 func (d *dockerComposeConfig) LeakedSecrets(ctx context.Context, app string, names []string) ([]string, error) {
 	d.rawOnce.Do(func() { d.rawServices, d.rawErr = d.load(ctx, true) })
 	if d.rawErr != nil {
@@ -193,16 +193,44 @@ func (d *dockerComposeConfig) LeakedSecrets(ctx context.Context, app string, nam
 }
 
 // literalLeaks returns the names whose value in env is a literal: present,
-// non-empty, and not a ${...} reference. A value that forwards a variable is a
+// non-empty, and not a variable reference. A value that forwards a variable is a
 // reference, not a hardcoded secret, so it is excluded.
 func literalLeaks(env map[string]string, names []string) []string {
 	var leaked []string
 	for _, name := range names {
-		if v, ok := env[name]; ok && v != "" && !strings.Contains(v, "${") {
+		if v, ok := env[name]; ok && v != "" && !hasVarReference(v) {
 			leaked = append(leaked, name)
 		}
 	}
 	return leaked
+}
+
+// hasVarReference reports whether v contains an unescaped docker-compose variable
+// reference, either braced ${VAR} or bare $VAR. A doubled "$$" is compose's
+// escape for a literal dollar, so it is skipped rather than read as a reference:
+// "pa$$word" and "pre$${X}" are hardcoded literals (the container sees a real
+// "$"), while "$VAR" and "${VAR}" forward another variable. Reading only the
+// braced form both missed an escaped literal (a pasted secret) and mis-flagged a
+// bare-dollar forward (a valid compose file) as a leak.
+func hasVarReference(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if v[i] != '$' {
+			continue
+		}
+		if i+1 < len(v) && v[i+1] == '$' {
+			i++ // skip the escaped "$$"
+			continue
+		}
+		// A reference is $ followed by '{' or the start of an identifier, matching
+		// compose's [A-Za-z_] variable grammar; a lone or digit-led $ is literal.
+		if i+1 < len(v) {
+			switch c := v[i+1]; {
+			case c == '{', c == '_', c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z':
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // load runs `docker compose config` once and returns each service's environment
@@ -238,13 +266,27 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 	for name, svc := range cfg.Services {
 		env := make(map[string]string, len(svc.Environment))
 		for k, v := range svc.Environment {
-			if v.set {
-				env[k] = v.value
+			if !v.set {
+				continue
 			}
+			env[k] = containerValue(v.value, noInterpolate)
 		}
 		out[name] = env
 	}
 	return out, nil
+}
+
+// containerValue converts a value from `docker compose config --format json`
+// into what the container actually receives. `docker compose config` keeps
+// compose's `$$` escape verbatim even in the interpolated output, but the
+// container sees a single `$`, so collapse it there. The no-interpolate read is
+// left raw so leak detection can still tell an escaped literal (`$$`) from a
+// `${VAR}` forward.
+func containerValue(v string, noInterpolate bool) string {
+	if noInterpolate {
+		return v
+	}
+	return strings.ReplaceAll(v, "$$", "$")
 }
 
 // composeEnv is a service's environment block. `docker compose config --format

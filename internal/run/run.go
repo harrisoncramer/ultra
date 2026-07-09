@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
@@ -88,10 +89,19 @@ type Params struct {
 // appended to env. A store-level failure is fatal; a missing individual secret
 // is not. No secret value is written to disk; only the names-only override is.
 func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) {
+	// The override's service key is each app's name, which must match a service in
+	// the base compose or docker rejects the merged project ("neither an image nor
+	// a build context") and no service starts. Drop any app whose name isn't a
+	// base service, warning why, so a dir-name/service-name mismatch degrades to a
+	// clear message and the rest of the stack still runs, rather than a cryptic
+	// docker failure. Only filter when the base compose is readable; run may exec
+	// a non-docker command that never consults it.
+	apps := r.scopeToComposeServices(params.Apps)
+
 	// The override lists the declared secret names, not values, and is cheap to
 	// produce, so regenerate it every run from the current Config. That keeps it
 	// in sync with the code without a separate step or a committed file.
-	result, err := r.generator.Generate(params.Apps)
+	result, err := r.generator.Generate(apps)
 	if err != nil {
 		return nil, err
 	}
@@ -154,9 +164,36 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	return &prepared{env: env, composeFiles: composeFiles}, nil
 }
 
+// scopeToComposeServices drops any app whose name isn't a service in the base
+// compose file, warning for each, so its override block can't turn the merged
+// project into one docker rejects. It returns the apps unchanged when the base
+// compose can't be read (it may be absent, or the command may not be docker), so
+// this only ever removes an app that would otherwise have broken the run.
+func (r *Runner) scopeToComposeServices(apps []string) []string {
+	services, err := compose.ServiceNames(filepath.Join(r.project.Root, r.composeFile))
+	if err != nil {
+		return apps
+	}
+	kept := make([]string, 0, len(apps))
+	for _, appPath := range apps {
+		name := r.project.AppName(appPath)
+		if services[name] {
+			kept = append(kept, appPath)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "ultra: %s has no service %q in %s, skipping it; its secrets won't be injected\n", appPath, name, r.composeFile)
+	}
+	return kept
+}
+
 // Run resolves every app's secrets and execs the command with them set in the
 // environment and COMPOSE_FILE pointed at the regenerated overrides.
 func (r *Runner) Run(ctx context.Context, params Params) error {
+	// Guard here as well as in the CLI: Run is exported, and a caller passing an
+	// empty command would otherwise panic on Command[0] below.
+	if len(params.Command) == 0 {
+		return fmt.Errorf("no command to run: pass a command to exec")
+	}
 	prep, err := r.prepare(ctx, params)
 	if err != nil {
 		return err

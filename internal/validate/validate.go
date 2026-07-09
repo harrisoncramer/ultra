@@ -187,8 +187,26 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	}
 	defer func() { _ = os.RemoveAll(genDir) }()
 
-	cmd := exec.CommandContext(ctx, "go", "run", ".")
-	cmd.Dir = genDir
+	// Build and run as two steps with different environments. The build must use
+	// the process environment only: the reconstructed env carries the app's own
+	// config values, and one named like a go toolchain variable (GOFLAGS, GOCACHE,
+	// HOME, ...) would otherwise corrupt the build and produce a failure unrelated
+	// to the app's Config. The built program then runs against the reconstructed
+	// env, which is what the app's Config parses.
+	bin := filepath.Join(genDir, "validate-bin")
+	build := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
+	build.Dir = genDir
+	build.Env = os.Environ()
+	var buildErr bytes.Buffer
+	build.Stderr = &buildErr
+	if err := build.Run(); err != nil {
+		if msg := strings.TrimSpace(buildErr.String()); msg != "" {
+			return fmt.Errorf("building validation program: %s", msg)
+		}
+		return fmt.Errorf("building validation program: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin)
 	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

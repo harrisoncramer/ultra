@@ -1,0 +1,4 @@
+services:
+  web:
+    image: busybox
+    command: ["sh", "-c", "echo WEB_RAN"]

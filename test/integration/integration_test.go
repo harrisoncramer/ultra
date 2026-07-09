@@ -33,6 +33,10 @@ func TestIntegration(t *testing.T) {
 	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
 	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
 	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
+	t.Run("run binds a secret under its envPrefix", r.runBindsPrefixedSecret)
+	t.Run("validate passes an app with an envPrefix secret", r.validatePassesPrefixedSecret)
+	t.Run("validate is not corrupted by a toolchain env var in compose", r.validateIgnoresToolchainEnv)
+	t.Run("run skips an app whose name has no matching compose service", r.runSkipsAppNotInCompose)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -346,6 +350,107 @@ func (r *Rig) validateRedactsMalformedValue(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "[redacted]") {
 		t.Errorf("expected the value to be redacted:\n%s", res.output)
+	}
+}
+
+func (r *Rig) runBindsPrefixedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "prefixed-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// The Config nests DB.URL under envPrefix "DB_", so the app reads DB_URL, not
+	// URL. The store key and the generated binding must both use the prefixed name.
+	if err := s.Seed("web", map[string]string{
+		"DB_URL":  "postgres://prefixed",
+		"API_KEY": "key-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/web", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+	// The override binds the prefixed name; before envPrefix was honored it bound
+	// the bare URL and the secret never reached the container.
+	assertFileContains(t, f.overridePath(), "DB_URL: ${ULTRA_WEB__DB_URL}")
+	for _, want := range []string{"DB_URL=postgres://prefixed", "API_KEY=key-123"} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("container did not observe %q\n%s", want, res.output)
+		}
+	}
+}
+
+func (r *Rig) validatePassesPrefixedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "prefixed-app")
+
+	// Both required secrets present under the names the app actually reads.
+	if err := s.Seed("web", map[string]string{
+		"DB_URL":  "postgres://prefixed",
+		"API_KEY": "key-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"validate", "apps/web", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("validate should pass when the prefixed secrets are present:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "ok    web") {
+		t.Errorf("expected web to validate ok:\n%s", res.output)
+	}
+}
+
+func (r *Rig) validateIgnoresToolchainEnv(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "toolchain-app")
+
+	// The app's compose sets GOFLAGS=-mod=vendor as ordinary app config. It must
+	// not leak into the environment ultra builds the validation program with, or
+	// the go toolchain fails on a nonexistent vendor dir and validate reports a
+	// spurious failure that has nothing to do with the app's Config.
+	if err := s.Seed("svc", map[string]string{"SVC_TOKEN": "tok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"validate", "apps/svc", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("a compose toolchain var must not corrupt validate's build:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "ok    svc") {
+		t.Errorf("expected svc to validate ok:\n%s", res.output)
+	}
+}
+
+func (r *Rig) runSkipsAppNotInCompose(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "mismatch-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// The app dir is apps/frontend but the compose service is "web". Its override
+	// block would be an imageless orphan service that makes docker reject the whole
+	// project. run must skip it with a clear warning and still bring up the base
+	// stack, rather than fail every service with a cryptic docker error.
+	if err := s.Seed("frontend", map[string]string{"FE_TOKEN": "tok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/frontend", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run should skip the orphan app and still start the base stack:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, `has no service "frontend"`) {
+		t.Errorf("expected a warning that the app has no matching service:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "WEB_RAN") {
+		t.Errorf("the base web service should have started:\n%s", res.output)
 	}
 }
 
