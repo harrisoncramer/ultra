@@ -193,7 +193,14 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	// HOME, ...) would otherwise corrupt the build and produce a failure unrelated
 	// to the app's Config. The built program then runs against the reconstructed
 	// env, which is what the app's Config parses.
+	// bin must be absolute: build runs with its working dir set to genDir, so a
+	// relative -o would be written under genDir/genDir and the exec below, run
+	// from a different working dir, wouldn't find it. This bit only with a
+	// relative --root, where genDir itself is relative.
 	bin := filepath.Join(genDir, "validate-bin")
+	if abs, err := filepath.Abs(bin); err == nil {
+		bin = abs
+	}
 	build := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
 	build.Dir = genDir
 	build.Env = os.Environ()

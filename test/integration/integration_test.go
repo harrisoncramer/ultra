@@ -37,6 +37,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("validate passes an app with an envPrefix secret", r.validatePassesPrefixedSecret)
 	t.Run("validate is not corrupted by a toolchain env var in compose", r.validateIgnoresToolchainEnv)
 	t.Run("run skips an app whose name has no matching compose service", r.runSkipsAppNotInCompose)
+	t.Run("validate works with a relative root", r.validateWithRelativeRoot)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -451,6 +452,30 @@ func (r *Rig) runSkipsAppNotInCompose(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "WEB_RAN") {
 		t.Errorf("the base web service should have started:\n%s", res.output)
+	}
+}
+
+func (r *Rig) validateWithRelativeRoot(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+
+	if err := s.Seed("worker", map[string]string{
+		"IT_DB_URL":  "postgres://it",
+		"IT_API_KEY": "key",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run from inside the fixture with --root ".", the shape the monorepo uses.
+	// The generated build dir is then relative, which must not misplace the built
+	// validation binary.
+	args := append([]string{"validate", "apps/worker", "--root", "."}, s.addrFlags()...)
+	res := r.ultraIn(t, f.root, args...)
+	if !res.ok() {
+		t.Fatalf("validate with a relative root failed:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "ok    worker") {
+		t.Errorf("expected worker to validate ok:\n%s", res.output)
 	}
 }
 
