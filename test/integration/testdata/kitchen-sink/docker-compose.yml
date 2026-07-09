@@ -1,0 +1,15 @@
+services:
+  everything:
+    image: busybox
+    environment:
+      LOG_LEVEL: debug
+      WORKERS: 8
+      SAMPLE_RATE: 0.5
+      DEBUG: true
+      CDN_URL: https://cdn.example.com/assets
+      LOCAL_ONLY: local-value
+      OPTIONAL: opt-value
+      CACHE_HOST: cache
+      CACHE_PORT: 6380
+      CACHE_TLS: true
+    command: ["sh", "-c", "true"]

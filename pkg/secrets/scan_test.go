@@ -78,6 +78,9 @@ func TestFields(t *testing.T) {
 		{"prefixed non-secret carries its prefix", "prefixed", "DB_HOST", nil, false},
 		{"reused type under a second prefix", "prefixed", "REPLICA_PASSWORD", nil, true},
 		{"embedded struct stacks its prefix", "prefixed", "SVC_TOKEN", nil, true},
+		{"named nested struct inherits the field's required", "nestedrequired", "DEV_ENDPOINT", []string{"local"}, false},
+		{"named nested field-level override wins", "nestedrequired", "DEV_DEBUG", []string{"staging"}, false},
+		{"field outside the nested struct is never required", "nestedrequired", "PLAIN", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

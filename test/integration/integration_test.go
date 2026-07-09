@@ -38,6 +38,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("validate is not corrupted by a toolchain env var in compose", r.validateIgnoresToolchainEnv)
 	t.Run("run skips an app whose name has no matching compose service", r.runSkipsAppNotInCompose)
 	t.Run("validate works with a relative root", r.validateWithRelativeRoot)
+	t.Run("validate handles a kitchen-sink config", r.validateKitchenSink)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -477,6 +478,50 @@ func (r *Rig) validateWithRelativeRoot(t *testing.T) {
 	if !strings.Contains(res.output, "ok    worker") {
 		t.Errorf("expected worker to validate ok:\n%s", res.output)
 	}
+}
+
+func (r *Rig) validateKitchenSink(t *testing.T) {
+	s := r.requireStore(t)
+
+	t.Run("local validates every field kind, nesting and default", func(t *testing.T) {
+		s.flush()
+		f := r.openFixture(t, "kitchen-sink")
+		// Only the always-required secret is needed in local; the production-scoped
+		// secrets are not. Every non-secret (URL, ints, floats, bools, the prefixed
+		// nested fields, the local-only value) comes from the compose config.
+		if err := s.Seed("everything", map[string]string{"API_KEY": "sk-local"}); err != nil {
+			t.Fatal(err)
+		}
+		args := append([]string{"validate", "apps/everything", "--root", f.root}, s.addrFlags()...)
+		res := r.ultra(t, args...)
+		if !res.ok() {
+			t.Fatalf("kitchen-sink config should validate in local:\n%s", res.output)
+		}
+		if !strings.Contains(res.output, "ok    everything") {
+			t.Errorf("expected everything to validate ok:\n%s", res.output)
+		}
+	})
+
+	t.Run("production enforces star- and production-scoped required, including inherited", func(t *testing.T) {
+		s.flush()
+		f := r.openFixture(t, "kitchen-sink")
+		// Seed only the always-required secret. PROD_SECRET (production-scoped) and
+		// OTEL_KEY (production-scoped, inherited from the embedded Telemetry struct)
+		// are missing, so production validation must fail naming both.
+		if err := s.Seed("everything", map[string]string{"API_KEY": "sk-prod"}); err != nil {
+			t.Fatal(err)
+		}
+		args := append([]string{"validate", "apps/everything", "--root", f.root, "--env", "production"}, s.addrFlags()...)
+		res := r.ultra(t, args...)
+		if res.ok() {
+			t.Fatalf("production validation should fail on the missing production secrets:\n%s", res.output)
+		}
+		for _, want := range []string{"PROD_SECRET", "OTEL_KEY"} {
+			if !strings.Contains(res.output, want) {
+				t.Errorf("production failure should name %s:\n%s", want, res.output)
+			}
+		}
+	})
 }
 
 func assertFileContains(t *testing.T, path, want string) {
