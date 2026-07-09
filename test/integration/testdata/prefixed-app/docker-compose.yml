@@ -1,0 +1,6 @@
+services:
+  web:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+    command: ["sh", "-c", "echo ULTRASAW DB_URL=$$DB_URL API_KEY=$$API_KEY"]

@@ -33,6 +33,8 @@ func TestIntegration(t *testing.T) {
 	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
 	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
 	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
+	t.Run("run binds a secret under its envPrefix", r.runBindsPrefixedSecret)
+	t.Run("validate passes an app with an envPrefix secret", r.validatePassesPrefixedSecret)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -346,6 +348,58 @@ func (r *Rig) validateRedactsMalformedValue(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "[redacted]") {
 		t.Errorf("expected the value to be redacted:\n%s", res.output)
+	}
+}
+
+func (r *Rig) runBindsPrefixedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "prefixed-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// The Config nests DB.URL under envPrefix "DB_", so the app reads DB_URL, not
+	// URL. The store key and the generated binding must both use the prefixed name.
+	if err := s.Seed("web", map[string]string{
+		"DB_URL":  "postgres://prefixed",
+		"API_KEY": "key-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/web", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+	// The override binds the prefixed name; before envPrefix was honored it bound
+	// the bare URL and the secret never reached the container.
+	assertFileContains(t, f.overridePath(), "DB_URL: ${ULTRA_WEB__DB_URL}")
+	for _, want := range []string{"DB_URL=postgres://prefixed", "API_KEY=key-123"} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("container did not observe %q\n%s", want, res.output)
+		}
+	}
+}
+
+func (r *Rig) validatePassesPrefixedSecret(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "prefixed-app")
+
+	// Both required secrets present under the names the app actually reads.
+	if err := s.Seed("web", map[string]string{
+		"DB_URL":  "postgres://prefixed",
+		"API_KEY": "key-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"validate", "apps/web", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("validate should pass when the prefixed secrets are present:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "ok    web") {
+		t.Errorf("expected web to validate ok:\n%s", res.output)
 	}
 }
 

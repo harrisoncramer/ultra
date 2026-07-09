@@ -20,6 +20,7 @@ var fixtureNames = []string{
 	"malformed",
 	"custom-config-dir",
 	"config-file",
+	"prefixed-app",
 }
 
 // Rig holds the shared, expensive setup the scenarios run against: the compiled
