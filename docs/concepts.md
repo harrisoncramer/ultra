@@ -39,7 +39,7 @@ if err != nil {
 fmt.Println("The Google Client ID is: %s", cfg.Google.ClientID)
 ```
 
-With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. The `ultra` CLI forwards secrets from the configured secret store into the running container by generating a single compose override, with one service block per app, that maps every secret each app's `Config` declares onto an app-namespaced launcher variable, then setting those variables at launch for the secrets the store returns. The override lists names only, never values, so it is safe to commit. A secret the store doesn't hold has no launcher variable set, so its override entry interpolates to empty; secrets are expected to come from the store, and a missing one is surfaced by `ultra validate` and `ultra lint`.
+With ultra, secret resolution happens entirely in memory, on demand, so no secrets are written to disk. `ultra gen` writes a single compose override, with one service block per app, that maps every secret each app's `Config` declares onto an app-namespaced launcher variable. The override lists names only, never values, so it is safe to commit. `ultra run` then forwards secrets from the configured secret store into the running container by resolving them and setting those launcher variables at launch for the secrets the store returns, pointing compose at the override `gen` wrote. A secret the store doesn't hold has no launcher variable set, so its override entry interpolates to empty; secrets are expected to come from the store, and a missing one is surfaced by `ultra validate` and `ultra lint`.
 
 The docker compose for the above configuration does not need to re-enumerate the secrets stored in the existing `Config` value. This is sufficient:
 

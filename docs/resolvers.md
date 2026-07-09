@@ -6,8 +6,6 @@ Your secret resolver says where secrets come from (1Password, AWS Secrets Manage
 
 Your config resolver says where an app's non-secret configuration comes from.
 
-The config resolver is used by `ultra validate` and `ultra lint`; `ultra run` never uses it. See the config resolver section below for what that means and why you rarely need to change it.
-
 ```go
 type SecretResolver interface {
 	Resolve(ctx context.Context, names []string) (map[string]string, error)
@@ -18,7 +16,9 @@ type ConfigResolver interface {
 }
 ```
 
-Choose your secret resolver with the `--secret-resolver` flag. Secret resolvers take different arguments. Currently, ultra ships with support for AWS Secrets Manager, 1Password, and HashiCorp Vault:
+Choose your secret resolver with the `--secret-resolver` flag. Secret resolvers take different arguments. 
+
+Currently, ultra ships with support for AWS Secrets Manager, 1Password, and HashiCorp Vault:
 
 ```bash
 ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker compose up

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
 	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
@@ -30,10 +31,11 @@ func (fakeComposer) Override(apps []pkgcompose.AppSecrets) string {
 }
 
 func newTestGenerator(root string, names []string) *Generator {
+	proj := project.Project{Root: root, ConfigDir: "config"}
 	return NewGenerator(NewGeneratorParams{
-		Scanner:  fakeScanner{names: names},
+		Reader:   configreader.NewConfigReader(configreader.NewConfigReaderParams{Scanner: fakeScanner{names: names}, Project: proj}),
 		Composer: fakeComposer{},
-		Project:  project.Project{Root: root, ConfigDir: "config"},
+		Project:  proj,
 	})
 }
 
@@ -137,10 +139,11 @@ func TestGenerateRejectsInvalidEnvName(t *testing.T) {
 
 func TestGenerateHonorsOutputDir(t *testing.T) {
 	root := t.TempDir()
+	proj := project.Project{Root: root, ConfigDir: "config"}
 	g := NewGenerator(NewGeneratorParams{
-		Scanner:   fakeScanner{names: []string{"A"}},
+		Reader:    configreader.NewConfigReader(configreader.NewConfigReaderParams{Scanner: fakeScanner{names: []string{"A"}}, Project: proj}),
 		Composer:  fakeComposer{},
-		Project:   project.Project{Root: root, ConfigDir: "config"},
+		Project:   proj,
 		OutputDir: "committed/overrides",
 	})
 	result, err := g.Generate([]string{"app"})
@@ -150,10 +153,11 @@ func TestGenerateHonorsOutputDir(t *testing.T) {
 
 func TestGenerateHonorsOutputFilename(t *testing.T) {
 	root := t.TempDir()
+	proj := project.Project{Root: root, ConfigDir: "config"}
 	g := NewGenerator(NewGeneratorParams{
-		Scanner:        fakeScanner{names: []string{"A"}},
+		Reader:         configreader.NewConfigReader(configreader.NewConfigReaderParams{Scanner: fakeScanner{names: []string{"A"}}, Project: proj}),
 		Composer:       fakeComposer{},
-		Project:        project.Project{Root: root, ConfigDir: "config"},
+		Project:        proj,
 		OutputFilename: "docker-compose.override.yml",
 	})
 	result, err := g.Generate([]string{"app"})

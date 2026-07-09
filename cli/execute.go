@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/harrisoncramer/ultra/internal/compose"
+	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/lint"
 	"github.com/harrisoncramer/ultra/internal/project"
@@ -108,7 +109,10 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 			apps = scoped
 		}
 		result, err := gen.NewGenerator(gen.NewGeneratorParams{
-			Scanner:        scan.NewScanner(),
+			Reader: configreader.NewConfigReader(configreader.NewConfigReaderParams{
+				Scanner: scan.NewScanner(),
+				Project: shared.project(),
+			}),
 			Composer:       compose.NewComposer(),
 			Project:        shared.project(),
 			OutputDir:      shared.outputDir,
@@ -167,11 +171,13 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
 		Short: "Resolve the given apps' secrets with a secret resolver and exec the command",
 		Long: "run resolves each app's secrets via the secret resolver named by\n" +
-			"--secret-resolver (for example 1password), forwards them into that app's\n" +
-			"container through a generated compose override, and execs the given command.\n" +
-			"Apps are the directories given before --, each holding a config package (name\n" +
-			"taken from the path's last element); if none are given the apps listed in\n" +
-			".ultra.toml are used. No secret is written to disk.",
+			"--secret-resolver (for example 1password) and execs the given command with\n" +
+			"them set, pointing COMPOSE_FILE at the committed override that gen wrote so\n" +
+			"the secrets reach the containers. run reads each app's Config for its\n" +
+			"declared secrets but writes nothing; run `ultra gen` first to produce the\n" +
+			"override. Apps are the directories given before --, each holding a config\n" +
+			"package (name taken from the path's last element); if none are given the\n" +
+			"apps listed in .ultra.toml are used. No file and no secret is written to disk.",
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
@@ -195,16 +201,14 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 			return fmt.Errorf("no apps given: pass app paths before -- or set apps in .ultra.toml")
 		}
 		runner := run.NewRunner(run.NewRunnerParams{
-			Generator: gen.NewGenerator(gen.NewGeneratorParams{
-				Scanner:        scan.NewScanner(),
-				Composer:       compose.NewComposer(),
-				Project:        shared.project(),
-				OutputDir:      shared.outputDir,
-				OutputFilename: shared.outputFilename,
+			Reader: configreader.NewConfigReader(configreader.NewConfigReaderParams{
+				Scanner: scan.NewScanner(),
+				Project: shared.project(),
 			}),
-			Composer:    compose.NewComposer(),
-			Project:     shared.project(),
-			ComposeFile: composeFile,
+			Composer:     compose.NewComposer(),
+			Project:      shared.project(),
+			ComposeFile:  composeFile,
+			OverridePath: gen.OverridePath(shared.project().Root, shared.outputDir, shared.outputFilename),
 		})
 		return runner.Run(cmd.Context(), run.Params{
 			Apps:        apps,
