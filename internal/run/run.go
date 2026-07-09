@@ -157,6 +157,11 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 // Run resolves every app's secrets and execs the command with them set in the
 // environment and COMPOSE_FILE pointed at the regenerated overrides.
 func (r *Runner) Run(ctx context.Context, params Params) error {
+	// Guard here as well as in the CLI: Run is exported, and a caller passing an
+	// empty command would otherwise panic on Command[0] below.
+	if len(params.Command) == 0 {
+		return fmt.Errorf("no command to run: pass a command to exec")
+	}
 	prep, err := r.prepare(ctx, params)
 	if err != nil {
 		return err

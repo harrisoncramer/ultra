@@ -104,16 +104,19 @@ func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map
 	return mergeOver(out, ov), nil
 }
 
-// mergeOver returns base with override's entries layered on top so the override
-// wins, tolerating a nil base.
+// mergeOver returns a new map of base with override's entries layered on top so
+// the override wins. It never mutates base: a config resolver may hand back a
+// cached map by reference (dockerComposeConfig does), and mutating it would
+// corrupt the cache and race a concurrent read.
 func mergeOver(base, override map[string]string) map[string]string {
-	if base == nil {
-		base = make(map[string]string, len(override))
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
 	}
 	for k, v := range override {
-		base[k] = v
+		merged[k] = v
 	}
-	return base
+	return merged
 }
 
 // LayerSecretResolver wraps base so the override's values win, or returns base
