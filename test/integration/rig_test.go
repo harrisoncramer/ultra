@@ -75,11 +75,19 @@ func newRig(t *testing.T) *Rig {
 // ultra runs the harness CLI with args and captures its combined output and exit
 // code.
 func (r *Rig) ultra(t *testing.T, args ...string) result {
+	return r.ultraIn(t, "", args...)
+}
+
+// ultraIn runs the harness CLI with its working directory set to dir (empty
+// means the test's own working directory), so a scenario can exercise a relative
+// --root resolved against dir.
+func (r *Rig) ultraIn(t *testing.T, dir string, args ...string) result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, r.binPath, args...)
+	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
