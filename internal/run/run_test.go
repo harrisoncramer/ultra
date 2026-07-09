@@ -64,12 +64,12 @@ func hasEnv(env []string, key, val string) bool {
 // writeOverride simulates gen having written the committed override for app with
 // the given secret names, including gen's fingerprint header, so run's staleness
 // check sees a current file to point COMPOSE_FILE at.
-func writeOverride(t *testing.T, path, app string, names []string) {
+func writeOverride(t *testing.T, path string, names []string) {
 	t.Helper()
 	sorted := append([]string(nil), names...)
 	sort.Strings(sorted)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-	content := pkgcompose.ComposeOverride([]pkgcompose.AppSecrets{{App: app, Names: sorted}})
+	content := pkgcompose.ComposeOverride([]pkgcompose.AppSecrets{{App: "app", Names: sorted}})
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
 
@@ -79,7 +79,7 @@ func writeOverride(t *testing.T, path, app string, names []string) {
 func TestPrepareResolvesAndPointsAtOverride(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override, "app", []string{"RESOLVED", "MISSING"})
+	writeOverride(t, override, []string{"RESOLVED", "MISSING"})
 	before, err := os.ReadFile(override)
 	require.NoError(t, err)
 
@@ -126,7 +126,7 @@ func TestPrepareErrorsWhenOverrideStale(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
 	// The committed override was generated for a different secret set.
-	writeOverride(t, override, "app", []string{"OLD_SECRET"})
+	writeOverride(t, override, []string{"OLD_SECRET"})
 
 	runner := newTestRunner(root, "", override, []string{"RESOLVED"})
 	_, err := runner.prepare(context.Background(), Params{
@@ -161,7 +161,7 @@ func TestPrepareNoSecretsSkipsOverride(t *testing.T) {
 func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override, "app", []string{"RESOLVED"})
+	writeOverride(t, override, []string{"RESOLVED"})
 
 	runner := newTestRunner(root, "docker-compose.lake.yml", override, []string{"RESOLVED"})
 	prep, err := runner.prepare(context.Background(), Params{
@@ -177,7 +177,7 @@ func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 func TestRunWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	override := filepath.Join(root, "tmp", "ultra.compose.yml")
-	writeOverride(t, override, "app", []string{"RESOLVED"})
+	writeOverride(t, override, []string{"RESOLVED"})
 	before, err := os.ReadFile(override)
 	require.NoError(t, err)
 
