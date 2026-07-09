@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -11,6 +12,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestComposeScalarUnmarshal covers the coercion of docker-compose environment
+// values: `docker compose config --format json` emits string, number, bool, or
+// null, and all non-null scalars must become their string form.
+func TestComposeScalarUnmarshal(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+		set  bool
+	}{
+		{"string", `"info"`, "info", true},
+		{"integer", `1`, "1", true},
+		{"float", `0.5`, "0.5", true},
+		{"bool true", `true`, "true", true},
+		{"bool false", `false`, "false", true},
+		{"null is unset", `null`, "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var s composeScalar
+			require.NoError(t, json.Unmarshal([]byte(c.json), &s))
+			assert.Equal(t, c.set, s.set)
+			assert.Equal(t, c.want, s.value)
+		})
+	}
+}
 
 // mapResolver is a secret or config resolver returning a fixed set of keys.
 type mapResolver struct{ have map[string]string }
