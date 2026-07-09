@@ -40,6 +40,62 @@ func TestComposeScalarUnmarshal(t *testing.T) {
 	}
 }
 
+// TestComposeEnvUnmarshal covers the two shapes `docker compose config --format
+// json` emits for a service's environment across compose versions: an object
+// keyed by name and a list of "KEY=VALUE" entries. Both must decode to the same
+// map, and null must yield an empty block.
+func TestComposeEnvUnmarshal(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want map[string]string
+	}{
+		{
+			name: "object shape",
+			json: `{"FOO":"bar","NUM":1,"FLAG":false,"UNSET":null}`,
+			want: map[string]string{"FOO": "bar", "NUM": "1", "FLAG": "false"},
+		},
+		{
+			name: "list shape",
+			json: `["FOO=bar","NUM=1","FLAG=false"]`,
+			want: map[string]string{"FOO": "bar", "NUM": "1", "FLAG": "false"},
+		},
+		{
+			name: "list value with equals sign",
+			json: `["DSN=postgres://u:p@h/db?sslmode=require"]`,
+			want: map[string]string{"DSN": "postgres://u:p@h/db?sslmode=require"},
+		},
+		{
+			name: "list reference is preserved",
+			json: `["FORWARD=${DATABASE_URL}"]`,
+			want: map[string]string{"FORWARD": "${DATABASE_URL}"},
+		},
+		{
+			name: "list entry without equals is unset",
+			json: `["PASSTHROUGH","FOO=bar"]`,
+			want: map[string]string{"FOO": "bar"},
+		},
+		{
+			name: "null is empty",
+			json: `null`,
+			want: map[string]string{},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var e composeEnv
+			require.NoError(t, json.Unmarshal([]byte(c.json), &e))
+			got := make(map[string]string, len(e))
+			for k, v := range e {
+				if v.set {
+					got[k] = v.value
+				}
+			}
+			assert.Equal(t, c.want, got)
+		})
+	}
+}
+
 // mapResolver is a secret or config resolver returning a fixed set of keys.
 type mapResolver struct{ have map[string]string }
 

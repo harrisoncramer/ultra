@@ -227,7 +227,7 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 
 	var cfg struct {
 		Services map[string]struct {
-			Environment map[string]composeScalar `json:"environment"`
+			Environment composeEnv `json:"environment"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &cfg); err != nil {
@@ -245,6 +245,45 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 		out[name] = env
 	}
 	return out, nil
+}
+
+// composeEnv is a service's environment block. `docker compose config --format
+// json` emits it in one of two shapes depending on the compose version: an object
+// keyed by name ({"KEY": scalar}) or a list of "KEY=VALUE" entries. It decodes
+// both into a map so the rest of the resolver sees one representation.
+type composeEnv map[string]composeScalar
+
+// UnmarshalJSON accepts either the object or list shape, plus null for an absent
+// block. List entries already carry stringified values, so each is stored as a
+// set scalar; an entry without '=' forwards a host variable and is left unset.
+func (e *composeEnv) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*e = composeEnv{}
+		return nil
+	}
+	if trimmed[0] == '[' {
+		var list []string
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return err
+		}
+		m := make(composeEnv, len(list))
+		for _, item := range list {
+			key, val, ok := strings.Cut(item, "=")
+			if !ok {
+				continue
+			}
+			m[key] = composeScalar{value: val, set: true}
+		}
+		*e = m
+		return nil
+	}
+	var m map[string]composeScalar
+	if err := json.Unmarshal(trimmed, &m); err != nil {
+		return err
+	}
+	*e = m
+	return nil
 }
 
 // composeScalar is a docker-compose environment value. `docker compose config
