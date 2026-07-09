@@ -266,13 +266,27 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 	for name, svc := range cfg.Services {
 		env := make(map[string]string, len(svc.Environment))
 		for k, v := range svc.Environment {
-			if v.set {
-				env[k] = v.value
+			if !v.set {
+				continue
 			}
+			env[k] = containerValue(v.value, noInterpolate)
 		}
 		out[name] = env
 	}
 	return out, nil
+}
+
+// containerValue converts a value from `docker compose config --format json`
+// into what the container actually receives. `docker compose config` keeps
+// compose's `$$` escape verbatim even in the interpolated output, but the
+// container sees a single `$`, so collapse it there. The no-interpolate read is
+// left raw so leak detection can still tell an escaped literal (`$$`) from a
+// `${VAR}` forward.
+func containerValue(v string, noInterpolate bool) string {
+	if noInterpolate {
+		return v
+	}
+	return strings.ReplaceAll(v, "$$", "$")
 }
 
 // composeEnv is a service's environment block. `docker compose config --format

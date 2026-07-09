@@ -206,6 +206,17 @@ func TestLiteralLeaks(t *testing.T) {
 	assert.Equal(t, []string{"HARDCODED", "ESCAPED_DOLLAR", "ESCAPED_BRACE"}, got)
 }
 
+func TestContainerValue(t *testing.T) {
+	// Interpolated read: $$ collapses to the single $ the container receives.
+	assert.Equal(t, "pa$word", containerValue("pa$$word", false))
+	assert.Equal(t, "a$b$c", containerValue("a$$b$$c", false))
+	assert.Equal(t, "plain", containerValue("plain", false))
+	// No-interpolate read: left raw so leak detection sees the escape and any
+	// ${VAR} forward exactly as written.
+	assert.Equal(t, "pa$$word", containerValue("pa$$word", true))
+	assert.Equal(t, "${VAR}", containerValue("${VAR}", true))
+}
+
 func TestHasVarReference(t *testing.T) {
 	cases := []struct {
 		v    string
