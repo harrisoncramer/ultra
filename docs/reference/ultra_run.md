@@ -4,12 +4,9 @@ Resolve the given apps' secrets with a secret resolver and exec the command
 
 ### Synopsis
 
-run resolves each app's secrets via the secret resolver named by
---secret-resolver (for example 1password), forwards them into that app's
-container through a generated compose override, and execs the given command.
-Apps are the directories given before --, each holding a config package (name
-taken from the path's last element); if none are given the apps listed in
-.ultra.toml are used. No secret is written to disk.
+The run command resolves each app's secrets from the secret provider and execs
+your command with them set. It reads the bindings the gen command wrote so the
+secrets reach your containers, so run gen first. It writes nothing to disk.
 
 ```
 ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...

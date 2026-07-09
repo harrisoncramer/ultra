@@ -59,7 +59,7 @@ if err != nil {
 ```bash
 ultra gen apps/worker                                                                          # writes the names-only compose override, no secret store needed
 ultra validate apps/worker --secret-resolver 1password --vault Engineering                     # fails fast if a required value is missing, or malformed
-ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # regenerates the override, injects DATABASE_URL, starts the container
+ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # reads the override gen wrote, injects DATABASE_URL, starts the container
 ```
 
 4. Optional: add an `.ultra.toml` at the repo root, naming your apps and secret store, so you can drop the flags:

@@ -23,15 +23,12 @@ Type "clear"
 Enter
 Show
 
-Type "# run resolves the secrets and execs your command with them injected in memory"
+Type "# The `run` command resolves the secrets from your resolver into the environment."
 Enter
 Sleep 2.5s
-Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__ | sort'"
+Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__"
 Enter
 Sleep 5s
-Type "# The only artifact on disk is the override — references, never the secret values"
+Type "# Use it after you've created a binding file with `gen` to pass secrets to Docker"
 Enter
 Sleep 2.5s
-Type "bat --paging=never tmp/ultra.compose.yml"
-Enter
-Sleep 6s

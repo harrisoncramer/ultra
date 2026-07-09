@@ -4,16 +4,10 @@ Generate the single compose file for the given apps without resolving secrets
 
 ### Synopsis
 
-gen writes one names-only docker compose file, mapping every secret each app's
-Config declares onto its namespaced launcher variable, one service block per
-app, into --output-dir/--output-filename. It reads only the apps' config
-packages and never contacts the secret store, so it works offline and its
-output can be committed and reused by run. Apps are the directories given as
-arguments, or those listed in .ultra.toml when none are given.
-
-Pass --compose-file to scope the output to one stack: gen then writes a service
-block only for apps whose service the given compose file defines, so the result
-merges cleanly onto a subset stack. Generate one file per stack this way.
+The gen command writes a single docker compose file that contains the bindings
+for all ultra secrets defined in each app's config package. It does not contact
+the secret provider; it merely sets the key/value pairs for the run command to
+use.
 
 ```
 ultra gen [app-path...] [flags]

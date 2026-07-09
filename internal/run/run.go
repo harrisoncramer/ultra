@@ -1,6 +1,8 @@
-// Package run is the run domain: it generates the combined names-only compose
-// override, resolves each app's secrets, and execs a command with the launcher
-// environment and COMPOSE_FILE set.
+// Package run is the run domain: it reads each app's declared secrets through
+// the shared configreader, resolves their values from the secret store, and
+// execs a command with the launcher environment and COMPOSE_FILE set. It never
+// writes a compose file; it points COMPOSE_FILE at the override gen already
+// wrote, so generation and running stay separate concerns.
 package run
 
 import (
@@ -11,9 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/harrisoncramer/ultra/internal/gen"
+	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
+	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -23,10 +26,11 @@ import (
 // simultaneously.
 const maxConcurrentApps = 8
 
-// generator writes the combined compose override and reports the secret names
-// each app declares, independent of the secret store.
-type generator interface {
-	Generate(apps []string) (gen.Result, error)
+// configReader reports the secret names each app's Config declares. It is the
+// shared source of truth gen and run both read, so run resolves exactly the
+// secrets gen wrote into the committed override.
+type configReader interface {
+	Read(apps []string) ([]configreader.AppOutput, error)
 }
 
 // composer renders the namespaced launcher variable a secret is passed through.
@@ -34,21 +38,23 @@ type composer interface {
 	Var(app, name string) string
 }
 
-// Runner generates apps' overrides, resolves their secrets, and launches
-// commands against them.
+// Runner reads apps' declared secrets, resolves them, and launches commands with
+// them injected. It does not generate the compose override; gen does.
 type Runner struct {
-	generator   generator
-	composer    composer
-	project     project.Project
-	composeFile string
+	reader       configReader
+	composer     composer
+	project      project.Project
+	composeFile  string
+	overridePath string
 }
 
 // NewRunnerParams are the dependencies and layout NewRunner needs.
 type NewRunnerParams struct {
-	Generator   generator
-	Composer    composer
-	Project     project.Project
-	ComposeFile string // base compose file COMPOSE_FILE points at; empty means "docker-compose.yml"
+	Reader       configReader
+	Composer     composer
+	Project      project.Project
+	ComposeFile  string // base compose file COMPOSE_FILE points at; empty means "docker-compose.yml"
+	OverridePath string // path to the committed override gen wrote; required when any app declares a secret
 }
 
 // NewRunner builds a Runner, defaulting the compose file.
@@ -58,10 +64,11 @@ func NewRunner(params NewRunnerParams) *Runner {
 		composeFile = "docker-compose.yml"
 	}
 	return &Runner{
-		generator:   params.Generator,
-		composer:    params.Composer,
-		project:     params.Project,
-		composeFile: composeFile,
+		reader:       params.Reader,
+		composer:     params.Composer,
+		project:      params.Project,
+		composeFile:  composeFile,
+		overridePath: params.OverridePath,
 	}
 }
 
@@ -80,19 +87,27 @@ type Params struct {
 	Command     []string
 }
 
-// prepare generates every app's compose override, resolves each app's secrets
-// via ResolverFor, and returns the launcher env (os environment plus
-// app-namespaced secrets) and the compose file list with COMPOSE_FILE already
-// appended to env. A store-level failure is fatal; a missing individual secret
-// is not. No secret is written to disk.
+// prepare reads every app's declared secrets, resolves each app's secrets via
+// ResolverFor, and returns the launcher env (os environment plus app-namespaced
+// secrets) and the compose file list with COMPOSE_FILE already appended to env.
+// A store-level failure is fatal; a missing individual secret is not. When any
+// app declares a secret, the committed override gen wrote must exist, since it
+// is what forwards the secrets into containers. Nothing is written to disk.
 func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) {
-	// The override is static (it lists the declared secret names, not values),
-	// so generate it up front without the store; run only resolves and injects.
-	result, err := r.generator.Generate(params.Apps)
+	// Read the declared secret names from config, the shared source of truth, so
+	// run resolves exactly what gen wrote into the override. run never generates
+	// the override itself.
+	overrides, err := r.reader.Read(params.Apps)
 	if err != nil {
 		return nil, err
 	}
-	overrides := result.Apps
+
+	// Verify the committed override before touching the secret store, so a stale
+	// or missing file fails fast with no store round-trips.
+	composeFiles, err := r.overrideComposeFiles(overrides)
+	if err != nil {
+		return nil, err
+	}
 
 	// Each app's secret store round-trip is independent, so fire them all off
 	// concurrently and let the errgroup cancel the rest on the first store-level
@@ -136,10 +151,7 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	}
 
 	env := os.Environ()
-	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
-	if result.Path != "" {
-		composeFiles = append(composeFiles, result.Path)
-	}
+
 	for i := range overrides {
 		env = append(env, results[i].envVars...)
 		if results[i].log != "" {
@@ -151,8 +163,51 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	return &prepared{env: env, composeFiles: composeFiles}, nil
 }
 
+// overrideComposeFiles returns the base compose file plus, when any app declares
+// a secret, the committed override gen wrote. It requires that override to exist
+// and still match the current Config: a declared secret whose fingerprint the
+// override doesn't carry would be resolved into the env but never forwarded, so
+// run fails loudly rather than dropping it silently. It never contacts the store.
+func (r *Runner) overrideComposeFiles(overrides []configreader.AppOutput) ([]string, error) {
+	files := []string{filepath.Join(r.project.Root, r.composeFile)}
+	if !declaresSecret(overrides) {
+		return files, nil
+	}
+	if r.overridePath == "" {
+		return nil, fmt.Errorf("no override path configured; run `ultra gen` first")
+	}
+	data, err := os.ReadFile(r.overridePath)
+	if err != nil {
+		return nil, fmt.Errorf("secret override %s not found; run `ultra gen` first: %w", r.overridePath, err)
+	}
+	fingerprints := pkgcompose.ParseFingerprints(string(data))
+	var stale []string
+	for _, o := range overrides {
+		if len(o.Names) == 0 {
+			continue
+		}
+		if fingerprints[o.App] != pkgcompose.Fingerprint(o.Names) {
+			stale = append(stale, o.App)
+		}
+	}
+	if len(stale) > 0 {
+		return nil, fmt.Errorf("secret override %s is stale for %s; run `ultra gen`", r.overridePath, strings.Join(stale, ", "))
+	}
+	return append(files, r.overridePath), nil
+}
+
+// declaresSecret reports whether any app declares at least one secret.
+func declaresSecret(overrides []configreader.AppOutput) bool {
+	for _, o := range overrides {
+		if len(o.Names) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Run resolves every app's secrets and execs the command with them set in the
-// environment and COMPOSE_FILE pointed at the generated overrides.
+// environment and COMPOSE_FILE pointed at the committed override gen wrote.
 func (r *Runner) Run(ctx context.Context, params Params) error {
 	prep, err := r.prepare(ctx, params)
 	if err != nil {

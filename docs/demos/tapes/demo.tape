@@ -13,45 +13,42 @@ Type "export PATH=$PWD:$PATH"
 Enter
 Type "unset DATABASE_URL STRIPE_SECRET_KEY DEV_DATABASE_URL LOG_LEVEL"
 Enter
+Type "export DATABASE_URL=postgres://user:pass@db:5432/app"
+Enter
+Type "export STRIPE_SECRET_KEY=sk_live_abc123"
+Enter
 Type "rm -rf tmp"
 Enter
 Type "clear"
 Enter
 Show
 
-Type "# One Go struct is the whole config contract"
+Type "# First, define your application configuration."
 Enter
 Sleep 2.5s
-Type "bat --paging=never apps/worker/config/config.go"
+Type "bat apps/worker/config/config.go"
 Enter
 Sleep 5s
 
-Type "# ultra gen: names-only compose override, no secret store needed"
+Type "# Next, use `ultra gen` to build a Docker compose override."
 Enter
 Sleep 2.5s
 Type "ultra gen apps/worker"
 Enter
 Sleep 3.5s
-Type "bat --paging=never tmp/ultra.compose.yml"
+Type "# The override maps each secret to a launcher variable."
+Enter
+Sleep 2.5s
+Type "bat tmp/ultra.compose.yml"
 Enter
 Sleep 5s
 
-Type "# Provide the required secrets, then validate the app boots clean"
+Type "# Next, use `ultra run` to resolve secrets from your provider (like 1password, aws, etc) into your service, purely in memory."
 Enter
 Sleep 2.5s
-Type "export DATABASE_URL=postgres://user:pass@db:5432/app"
+Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__'"
 Enter
-Type "export STRIPE_SECRET_KEY=sk_live_abc123"
+Sleep 5s
+Type "# Nothing was written to disk, and drift is impossible. The config package is your source of truth, and values reach only the process you launched."
 Enter
-Type "ultra validate apps/worker --secret-resolver env"
-Enter
-Sleep 4.5s
-
-Type "# Drop a required secret and it fails before the container ever starts"
-Enter
-Sleep 2.5s
-Type "unset STRIPE_SECRET_KEY"
-Enter
-Type "ultra validate apps/worker --secret-resolver env"
-Enter
-Sleep 5.5s
+Sleep 4s

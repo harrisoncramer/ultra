@@ -33,6 +33,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("run injects a value with special characters verbatim", r.runInjectsSpecialCharValue)
 	t.Run("run forwards an empty secret value", r.runForwardsEmptySecretValue)
 	t.Run("run skips an app that declares no secrets", r.runSkipsAppWithoutSecrets)
+	t.Run("run rejects a stale override", r.runRejectsStaleOverride)
 	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
 	t.Run("gen honors a custom config dir", r.genHonorsConfigDir)
 	t.Run("config file supplies defaults the command line overrides", r.configFilePrecedence)
@@ -73,6 +74,8 @@ func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	r.genOverride(t, f, "apps/worker")
+
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
 	res := r.ultra(t, args...)
@@ -95,6 +98,8 @@ func (r *Rig) runLeavesUnresolvedSecretEmpty(t *testing.T) {
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://only-db"}); err != nil {
 		t.Fatal(err)
 	}
+
+	r.genOverride(t, f, "apps/worker")
 
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
@@ -122,6 +127,8 @@ func (r *Rig) runNamespacesSecretsPerApp(t *testing.T) {
 	if err := s.Seed("worker", map[string]string{"DATABASE_URL": "wrk-db", "WORKER_TOKEN": "wt"}); err != nil {
 		t.Fatal(err)
 	}
+
+	r.genOverride(t, f, "apps/server", "apps/worker")
 
 	args := append([]string{"run", "apps/server", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "true")
@@ -263,6 +270,8 @@ func (r *Rig) runInjectsSpecialCharValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	r.genOverride(t, f, "apps/worker")
+
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
 	res := r.ultra(t, args...)
@@ -283,6 +292,8 @@ func (r *Rig) runForwardsEmptySecretValue(t *testing.T) {
 	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": ""}); err != nil {
 		t.Fatal(err)
 	}
+
+	r.genOverride(t, f, "apps/worker")
 
 	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
@@ -311,6 +322,8 @@ func (r *Rig) runSkipsAppWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	r.genOverride(t, f, "apps/server", "apps/worker", "apps/nosec")
+
 	args := append([]string{"run", "apps/server", "apps/worker", "apps/nosec", "--root", f.root}, s.addrFlags()...)
 	args = append(args, "--", "true")
 	res := r.ultra(t, args...)
@@ -326,6 +339,30 @@ func (r *Rig) runSkipsAppWithoutSecrets(t *testing.T) {
 		t.Errorf("reading combined override: %v", err)
 	} else if strings.Contains(string(data), "nosec:") {
 		t.Errorf("an app with no secrets should get no service block:\n%s", data)
+	}
+}
+
+func (r *Rig) runRejectsStaleOverride(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "multi-app")
+
+	if err := s.Seed("worker", map[string]string{"DATABASE_URL": "wrk", "WORKER_TOKEN": "wt"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// gen only covers server, so the committed override carries no bindings for
+	// worker. Running worker against it must fail: worker's secrets would resolve
+	// but never reach the container, exactly the drift the fingerprint guards.
+	r.genOverride(t, f, "apps/server")
+
+	args := append([]string{"run", "apps/worker", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "true")
+	res := r.ultra(t, args...)
+	if res.ok() {
+		t.Fatalf("run should reject an override that doesn't cover worker:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "stale") || !strings.Contains(res.output, "worker") {
+		t.Errorf("expected a stale-override error naming worker:\n%s", res.output)
 	}
 }
 
@@ -385,6 +422,18 @@ func (r *Rig) configFilePrecedence(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.root, "from-cli", overrideName)); err != nil {
 		t.Errorf("command-line --output-dir should win over the file: %v", err)
+	}
+}
+
+// genOverride runs gen for the given apps into the fixture's default output
+// dir, so run has the committed override to point COMPOSE_FILE at. run no
+// longer generates the override itself; gen and run are separate steps.
+func (r *Rig) genOverride(t *testing.T, f *fixture, apps ...string) {
+	t.Helper()
+	args := append([]string{"gen"}, apps...)
+	args = append(args, "--root", f.root)
+	if res := r.ultra(t, args...); !res.ok() {
+		t.Fatalf("gen failed:\n%s", res.output)
 	}
 }
 

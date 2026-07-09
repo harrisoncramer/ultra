@@ -23,16 +23,16 @@ Type "clear"
 Enter
 Show
 
-Type "# lint compares the keys Config requires against the keys the resolver offers"
+Type "# The `lint` command compares the keys our config requires against the keys the resolver offers"
 Enter
 Sleep 2.5s
-Type "# It never reads a value, so it runs where the real secrets aren't reachable"
+Type "# It never reads their values -- it's "weaker" than validate -- but can run in less-permisisoned environments."
 Enter
 Sleep 2.5s
 Type "ultra lint apps/worker --secret-resolver env"
 Enter
 Sleep 4.5s
-Type "# Remove a required key and lint catches the drift"
+Type "# To see it working, try removing a required key, and see lint catch the drift"
 Enter
 Sleep 2.5s
 Type "unset STRIPE_SECRET_KEY"

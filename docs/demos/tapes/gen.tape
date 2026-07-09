@@ -19,18 +19,24 @@ Type "clear"
 Enter
 Show
 
-Type "# gen builds the compose override from your Config — offline, no secret store"
+Type "# The `gen` command builds the compose override from your Config. Here's our config package:"
 Enter
 Sleep 2.5s
-Type "bat --paging=never apps/worker/config/config.go"
+Type "bat apps/worker/config/config.go"
 Enter
 Sleep 5s
+Type "# Let's generate our binding file first."
+Enter
+Sleep 2.5s
 Type "ultra gen apps/worker"
 Enter
 Sleep 3.5s
-Type "# The override maps each secret to a launcher variable — references only, never a value"
+Type "# Now, the override maps each secret to a launcher variable"
 Enter
 Sleep 2.5s
-Type "bat --paging=never tmp/ultra.compose.yml"
+Type "bat tmp/ultra.compose.yml"
 Enter
 Sleep 6s
+Type "# This binding file can now inject secrets via Ultra to the running containers"
+Enter
+Sleep 2.5s
