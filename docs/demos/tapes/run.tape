@@ -26,9 +26,9 @@ Show
 Type "# The `run` command resolves the secrets from your resolver into the environment."
 Enter
 Sleep 2.5s
-Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__"
+Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__'"
 Enter
 Sleep 5s
-Type "# Use it after you've created a binding file with `gen` to pass secrets to Docker"
+Type "# It regenerates the compose override from your Config each run, so secrets reach Docker with nothing written to disk."
 Enter
 Sleep 2.5s

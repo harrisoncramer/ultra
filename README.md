@@ -54,12 +54,11 @@ if err != nil {
 }
 ```
 
-3. Generate an app's compose override, validate it, and/or run your command with secrets injected:
+3. Validate the configuration and/or run your command with secrets injected:
 
 ```bash
-ultra gen apps/worker                                                                          # writes the names-only compose override, no secret store needed
 ultra validate apps/worker --secret-resolver 1password --vault Engineering                     # fails fast if a required value is missing, or malformed
-ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # reads the override gen wrote, injects DATABASE_URL, starts the container
+ultra run apps/worker --secret-resolver 1password --vault Engineering -- docker compose up     # resolves secrets, injects DATABASE_URL, starts the container
 ```
 
 4. Optional: add an `.ultra.toml` at the repo root, naming your apps and secret store, so you can drop the flags:
@@ -150,7 +149,7 @@ That said, Ultra is deliberately narrow. It does not try to be Kubernetes, Terra
 Concepts and guides:
 
 - [How it works](docs/concepts.md): the secrets-vs-config model and how overrides are generated
-- [Commands](docs/commands.md): what `gen`, `run`, `validate`, and `lint` are for
+- [Commands](docs/commands.md): what `run`, `validate`, and `lint` are for
 - [Resolvers](docs/resolvers.md): secret and config resolvers, their flags, and the override layer
 - [Environments](docs/environments.md): the `required` tag and `--env`
 - [Configuration file](docs/config-file.md): the optional `.ultra.toml`

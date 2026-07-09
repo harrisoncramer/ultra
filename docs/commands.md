@@ -2,32 +2,11 @@
 
 This page explains what each command is for and when to reach for it. For the exact usage line and every flag, see [reference/](reference/ultra.md) or run `ultra <command> --help`.
 
-## gen
-
-![ultra gen](assets/demos/gen.gif)
-
-The `gen` command generates a docker compose binding file for application secrets.
-
-The binding file is written with one service block per app to `--output-dir/--output-filename` (by default `tmp/ultra.compose.yml`). Generating it is a static operation over each app's `Config` and needs no secret store.
-
-```bash
-ultra gen apps/server apps/worker --output-dir compose/generated
-```
-
-Later, the `run` command reads this binding file to inject secrets.
-
-The `gen` command by default works with `docker-compose.yml` as its input stack. However, you can also point `--compose-file` at a different stack of services:
-
-```bash
-ultra gen --compose-file docker-compose.yml          --output-filename local.compose.yml
-ultra gen --compose-file docker-compose.sandbox.yml  --output-filename sandbox.compose.yml
-```
-
 ## run
 
 ![ultra run](assets/demos/run.gif)
 
-The `run` command resolves each app's secrets via the selected secret resolver and execs the given command with them set, pointing `COMPOSE_FILE` at the binding file `gen` wrote so the secrets reach the containers. Run `gen` first; `run` reads the binding file but writes nothing.
+The `run` command resolves each app's secrets via the selected secret resolver and execs the given command with them set. It regenerates a names-only docker compose override from each app's `Config` into a temporary directory on every run, points `COMPOSE_FILE` at it, and lets docker interpolate the resolved secrets into the containers. The override is derived from the code each time, so it is always current; no separate step, no committed file, and no secret value is written to disk.
 
 ```bash
 ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker compose up
