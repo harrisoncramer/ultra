@@ -22,6 +22,7 @@ var fixtureNames = []string{
 	"config-file",
 	"prefixed-app",
 	"toolchain-app",
+	"mismatch-app",
 }
 
 // Rig holds the shared, expensive setup the scenarios run against: the compiled

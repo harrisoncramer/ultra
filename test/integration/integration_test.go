@@ -36,6 +36,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("run binds a secret under its envPrefix", r.runBindsPrefixedSecret)
 	t.Run("validate passes an app with an envPrefix secret", r.validatePassesPrefixedSecret)
 	t.Run("validate is not corrupted by a toolchain env var in compose", r.validateIgnoresToolchainEnv)
+	t.Run("run skips an app whose name has no matching compose service", r.runSkipsAppNotInCompose)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -423,6 +424,33 @@ func (r *Rig) validateIgnoresToolchainEnv(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "ok    svc") {
 		t.Errorf("expected svc to validate ok:\n%s", res.output)
+	}
+}
+
+func (r *Rig) runSkipsAppNotInCompose(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "mismatch-app")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// The app dir is apps/frontend but the compose service is "web". Its override
+	// block would be an imageless orphan service that makes docker reject the whole
+	// project. run must skip it with a clear warning and still bring up the base
+	// stack, rather than fail every service with a cryptic docker error.
+	if err := s.Seed("frontend", map[string]string{"FE_TOKEN": "tok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/frontend", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run should skip the orphan app and still start the base stack:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, `has no service "frontend"`) {
+		t.Errorf("expected a warning that the app has no matching service:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "WEB_RAN") {
+		t.Errorf("the base web service should have started:\n%s", res.output)
 	}
 }
 
