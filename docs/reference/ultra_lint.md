@@ -23,8 +23,6 @@ ultra lint [app-path...] --secret-resolver <name> [flags]
       --config-resolver string   non-secret config source: docker-compose, env (default "docker-compose")
       --env string               environment to check for; a field's required tag decides whether it's required in it
   -h, --help                     help for lint
-      --output-dir string        directory under --root the generated compose file is written to; point it at a committed path to keep it in version control (default "tmp")
-      --output-filename string   file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it (default "ultra.compose.yml")
       --reject-unreferenced      fail an app when a resolver provides a key no Config field references
       --root string              repo root the compose file and overrides are anchored to (default ".")
       --secret-resolver string   secret backend: 1password, vault, aws-secret-manager

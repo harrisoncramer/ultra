@@ -86,6 +86,8 @@ use.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
+	cmd.Flags().StringVar(&shared.outputDir, "output-dir", "tmp", "directory under --root the generated compose file is written to; point it at a committed path to keep it in version control")
+	cmd.Flags().StringVar(&shared.outputFilename, "output-filename", "ultra.compose.yml", "file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it")
 	cmd.Flags().StringVar(&composeFile, "compose-file", "", "scope the output to the services this compose file defines, relative to --root (default: every app)")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -198,7 +200,7 @@ secrets reach your containers, so run gen first. It writes nothing to disk.`,
 			Composer:     compose.NewComposer(),
 			Project:      shared.project(),
 			ComposeFile:  composeFile,
-			OverridePath: gen.OverridePath(shared.project().Root, shared.outputDir, shared.outputFilename),
+			OverridePath: gen.OverridePath(shared.project().Root, fc.flags["output-dir"], fc.flags["output-filename"]),
 		})
 		return runner.Run(cmd.Context(), run.Params{
 			Apps:        apps,
@@ -334,8 +336,6 @@ func addSharedFlags(cmd *cobra.Command, shared *sharedFlags) {
 	cmd.Flags().StringVar(&shared.root, "root", ".", "repo root the compose file and overrides are anchored to")
 	cmd.Flags().StringVar(&shared.configDir, "config-dir", "config", "config package directory under each app path (e.g. pkg/config)")
 	cmd.Flags().StringVar(&shared.configFile, "config-file", "", "path to the ultra config file (default "+configFileName+" under --root)")
-	cmd.Flags().StringVar(&shared.outputDir, "output-dir", "tmp", "directory under --root the generated compose file is written to; point it at a committed path to keep it in version control")
-	cmd.Flags().StringVar(&shared.outputFilename, "output-filename", "ultra.compose.yml", "file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it")
 }
 
 // resolveApps returns the app paths to operate on: the given positional args, or

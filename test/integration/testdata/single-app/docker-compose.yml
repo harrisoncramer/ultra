@@ -3,4 +3,6 @@ services:
     image: busybox
     environment:
       LOG_LEVEL: info
+      OTEL_ENABLED: false
+      OTEL_SAMPLE_RATE: 1
     command: ["sh", "-c", "echo ULTRASAW IT_DB_URL=$$IT_DB_URL IT_API_KEY=$$IT_API_KEY"]

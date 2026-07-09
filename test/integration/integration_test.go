@@ -27,6 +27,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("run leaves an unresolved secret empty", r.runLeavesUnresolvedSecretEmpty)
 	t.Run("run namespaces a shared secret per app", r.runNamespacesSecretsPerApp)
 	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
+	t.Run("validate coerces non-string env values", r.validateCoercesScalarEnv)
 	t.Run("validate enforces env-scoped required", r.validateEnvScopedRequired)
 	t.Run("lint flags a hardcoded secret", r.lintFlagsHardcodedSecret)
 	t.Run("validate flags a hardcoded secret", r.validateFlagsHardcodedSecret)
@@ -171,6 +172,24 @@ func (r *Rig) validatePassesAndFails(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "IT_API_KEY") {
 		t.Errorf("failure should name IT_API_KEY:\n%s", res.output)
+	}
+}
+
+func (r *Rig) validateCoercesScalarEnv(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "single-app")
+	if err := s.Seed("worker", map[string]string{"IT_DB_URL": "postgres://it", "IT_API_KEY": "k"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// single-app's compose sets non-string env values (OTEL_ENABLED: false,
+	// OTEL_SAMPLE_RATE: 1). docker compose config emits those as a JSON bool and
+	// number, so the config resolver must coerce them to strings rather than fail
+	// to parse the environment.
+	args := append([]string{"validate", "apps/worker", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("validate must coerce scalar env values, not fail parsing:\n%s", res.output)
 	}
 }
 

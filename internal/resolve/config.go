@@ -227,7 +227,7 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 
 	var cfg struct {
 		Services map[string]struct {
-			Environment map[string]*string `json:"environment"`
+			Environment map[string]composeScalar `json:"environment"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &cfg); err != nil {
@@ -238,13 +238,41 @@ func (d *dockerComposeConfig) load(ctx context.Context, noInterpolate bool) (map
 	for name, svc := range cfg.Services {
 		env := make(map[string]string, len(svc.Environment))
 		for k, v := range svc.Environment {
-			if v != nil {
-				env[k] = *v
+			if v.set {
+				env[k] = v.value
 			}
 		}
 		out[name] = env
 	}
 	return out, nil
+}
+
+// composeScalar is a docker-compose environment value. `docker compose config
+// --format json` emits values in their native JSON type — string, number, bool,
+// or null — so a plain *string can't receive `OTEL_SAMPLE_RATE: 1` or
+// `OTEL_ENABLED: false`. It coerces any scalar to its string form (the value a
+// container would see) and treats null as unset.
+type composeScalar struct {
+	value string
+	set   bool
+}
+
+// UnmarshalJSON accepts a JSON string, number, bool, or null, storing the scalar
+// as a string and leaving null unset.
+func (c *composeScalar) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		c.value, c.set = s, true
+		return nil
+	}
+	c.value, c.set = string(data), true
+	return nil
 }
 
 // envConfig provides no non-secret values: the environment (a running container

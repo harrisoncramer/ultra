@@ -19,8 +19,6 @@ ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...
       --config-dir string        config package directory under each app path (e.g. pkg/config) (default "config")
       --config-file string       path to the ultra config file (default .ultra.toml under --root)
   -h, --help                     help for run
-      --output-dir string        directory under --root the generated compose file is written to; point it at a committed path to keep it in version control (default "tmp")
-      --output-filename string   file name of the generated compose file under --output-dir; set it to docker-compose.override.yml to have compose auto-load it (default "ultra.compose.yml")
       --root string              repo root the compose file and overrides are anchored to (default ".")
       --secret-resolver string   secret backend: 1password, vault, aws-secret-manager
 ```
