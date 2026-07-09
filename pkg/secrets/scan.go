@@ -10,12 +10,15 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// visitKey identifies a struct reached at a given env-var prefix. The scan's
-// recursion guard keys on it so the same struct type under different envPrefix
-// values is scanned once per prefix, while a self-referential type terminates.
+// visitKey identifies a struct reached at a given env-var prefix and inherited
+// required scope. The scan's recursion guard keys on it so the same struct type
+// reached under a different envPrefix or a different required scope is scanned
+// again (its fields carry distinct names or required-ness), while a
+// self-referential type reached identically still terminates.
 type visitKey struct {
-	s      *types.Struct
-	prefix string
+	s        *types.Struct
+	prefix   string
+	required string
 }
 
 // Field is one env-var field reachable from a Config struct.
@@ -52,19 +55,24 @@ func Fields(dir string) ([]Field, error) {
 
 	var fields []Field
 	var badEnvTag []string
-	seen := map[string]struct{}{}
+	// seenIdx maps a final env name to its slot in fields, so a name declared by
+	// more than one reachable field is merged into one entry rather than the first
+	// occurrence silently winning.
+	seenIdx := map[string]int{}
 	visited := map[visitKey]bool{}
 
 	var visit func(s *types.Struct, prefix string, inherited []string)
 	visit = func(s *types.Struct, prefix string, inherited []string) {
-		// Key the recursion guard on the prefix as well as the struct: the same
-		// struct type reached under two different envPrefix values (e.g. DB_ and
-		// CACHE_) yields distinct env names and must be visited once per prefix,
-		// while a self-referential type at one prefix still terminates.
-		if visited[visitKey{s, prefix}] {
+		// Key the recursion guard on the prefix and inherited required scope as
+		// well as the struct: the same struct type reached under a different
+		// envPrefix (e.g. DB_ and CACHE_) or a different required scope yields
+		// distinct names or required-ness and must be scanned again, while a
+		// self-referential type reached identically still terminates.
+		key := visitKey{s, prefix, strings.Join(inherited, ",")}
+		if visited[key] {
 			return
 		}
-		visited[visitKey{s, prefix}] = true
+		visited[key] = true
 		for i := 0; i < s.NumFields(); i++ {
 			// env.Parse skips fields it can't set, so an unexported field is never
 			// populated at runtime; treat it as not declared here too, rather than
@@ -99,13 +107,20 @@ func Fields(dir string) ([]Field, error) {
 				badEnvTag = append(badEnvTag, name)
 				continue
 			}
-			if _, dup := seen[name]; dup {
+			secret := tag.Get("secret") == "true"
+			// caarlos0/env populates every field carrying this env name from the one
+			// variable, so it is secret if any declares it secret and required in the
+			// union of the scopes any of them require. Merging keeps visit order from
+			// silently deciding either.
+			if idx, dup := seenIdx[name]; dup {
+				fields[idx].Secret = fields[idx].Secret || secret
+				fields[idx].RequiredEnvs = unionEnvs(fields[idx].RequiredEnvs, requiredEnvs)
 				continue
 			}
-			seen[name] = struct{}{}
+			seenIdx[name] = len(fields)
 			fields = append(fields, Field{
 				Name:         name,
-				Secret:       tag.Get("secret") == "true",
+				Secret:       secret,
 				RequiredEnvs: requiredEnvs,
 			})
 		}
@@ -117,6 +132,31 @@ func Fields(dir string) ([]Field, error) {
 		return nil, fmt.Errorf("config at %s: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead", dir, strings.Join(badEnvTag, ", "))
 	}
 	return fields, nil
+}
+
+// unionEnvs merges two required-scope lists: a field required in the scopes of
+// any path that declares it. "*" (required everywhere) absorbs the rest, and two
+// empty lists stay nil (never required). The result is sorted for determinism.
+func unionEnvs(a, b []string) []string {
+	set := make(map[string]struct{}, len(a)+len(b))
+	for _, e := range a {
+		set[e] = struct{}{}
+	}
+	for _, e := range b {
+		set[e] = struct{}{}
+	}
+	if _, all := set["*"]; all {
+		return []string{"*"}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for e := range set {
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // splitEnvs parses a comma-separated required tag into its environment names.

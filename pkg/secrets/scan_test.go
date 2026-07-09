@@ -39,6 +39,7 @@ func TestSecretNames(t *testing.T) {
 		{name: "embedded and nested", fixture: "composed", want: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"}},
 		{name: "cross-package sub-struct", fixture: "crosspkg", want: []string{"LOCAL_TOKEN", "SUB_TOKEN"}},
 		{name: "envPrefix stacks, and a reused type gets each prefix", fixture: "prefixed", want: []string{"ADDR", "DB_PASSWORD", "REPLICA_PASSWORD", "ROOT_SECRET", "SVC_TOKEN"}},
+		{name: "duplicate env name keeps the secret flag regardless of visit order", fixture: "dupsecret", want: []string{"SHARED_URL"}},
 		{name: "unexported field is skipped like env.Parse", fixture: "unexported", want: []string{"PUBLIC_TOKEN"}},
 		{name: "no exported Config struct errors", fixture: "noconfig", wantErr: true},
 	}
@@ -77,6 +78,8 @@ func TestFields(t *testing.T) {
 		{"prefixed non-secret carries its prefix", "prefixed", "DB_HOST", nil, false},
 		{"reused type under a second prefix", "prefixed", "REPLICA_PASSWORD", nil, true},
 		{"embedded struct stacks its prefix", "prefixed", "SVC_TOKEN", nil, true},
+		{"duplicate name merges to secret", "dupsecret", "SHARED_URL", nil, true},
+		{"shared struct unions required scopes", "sharedreq", "SHARED_TOKEN", []string{"production"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
