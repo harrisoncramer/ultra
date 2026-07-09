@@ -65,4 +65,4 @@ The `lint` command also takes the `--reject-unreferenced` flag.
 ultra lint apps/server --secret-resolver aws-secret-manager --region us-east-1 --reject-unreferenced
 ```
 
-The `lint` command also fails when a `secret`-tagged field has its value hardcoded in the non-secret config, since secrets belong in the store, not committed config. When the config resolver is `docker-compose`, it reads the file without interpolation, so an entry that forwards a variable (`API_KEY: ${API_KEY}`) is treated as a reference and passes, while a pasted literal (`API_KEY: sk_live_...`) is flagged. Config sources that can't hold a literal, such as the `env` resolver, are not checked.
+The `lint` command also fails when a `secret`-tagged field has its value hardcoded in the non-secret config, since secrets belong in the store, not committed config.
