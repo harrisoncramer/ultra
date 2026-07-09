@@ -23,14 +23,14 @@ Type "clear"
 Enter
 Show
 
-Type "# Ultra makes it possible to define your application configuration in one place."
+Type "# First, define your application configuration."
 Enter
 Sleep 2.5s
-Type "bat --paging=never apps/worker/config/config.go"
+Type "bat apps/worker/config/config.go"
 Enter
 Sleep 5s
 
-Type "# First, use `ultra gen` to build a compose override from your Config — offline, no secret store."
+Type "# Next, use `ultra gen` to build a Docker compose override."
 Enter
 Sleep 2.5s
 Type "ultra gen apps/worker"
@@ -43,12 +43,12 @@ Type "bat tmp/ultra.compose.yml"
 Enter
 Sleep 5s
 
-Type "# Then `ultra run` resolves the secrets from your provider and execs your command with them injected in memory."
+Type "# Next, use `ultra run` to resolve secrets from your provider (like 1password, aws, etc) into your service, purely in memory."
 Enter
 Sleep 2.5s
 Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__'"
 Enter
 Sleep 5s
-Type "# Nothing hit disk but the references. The secret values reach only the process you launched."
+Type "# Nothing was written to disk, and drift is impossible. The config package is your source of truth, and values reach only the process you launched."
 Enter
 Sleep 4s

@@ -19,7 +19,7 @@ Type "clear"
 Enter
 Show
 
-Type "# validate resolves the real secrets and checks the app's Config actually parses"
+Type "# The `validate` command resolves secrets from the secret resolver and checks the app's config actually parses"
 Enter
 Sleep 2.5s
 Type "export DATABASE_URL=postgres://user:pass@db:5432/app"
@@ -29,7 +29,7 @@ Enter
 Type "ultra validate apps/worker --secret-resolver env"
 Enter
 Sleep 4.5s
-Type "# Drop a required secret — it fails before the container ever starts"
+Type "# Drop a required secret, and validate will fail before the container ever starts"
 Enter
 Sleep 2.5s
 Type "unset STRIPE_SECRET_KEY"
