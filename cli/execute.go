@@ -79,15 +79,10 @@ func newGenCmd(fc fileConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gen [app-path...] [flags]",
 		Short: "Generate the single compose file for the given apps without resolving secrets",
-		Long: "gen writes one names-only docker compose file, mapping every secret each app's\n" +
-			"Config declares onto its namespaced launcher variable, one service block per\n" +
-			"app, into --output-dir/--output-filename. It reads only the apps' config\n" +
-			"packages and never contacts the secret store, so it works offline and its\n" +
-			"output can be committed and reused by run. Apps are the directories given as\n" +
-			"arguments, or those listed in .ultra.toml when none are given.\n\n" +
-			"Pass --compose-file to scope the output to one stack: gen then writes a service\n" +
-			"block only for apps whose service the given compose file defines, so the result\n" +
-			"merges cleanly onto a subset stack. Generate one file per stack this way.",
+		Long: `The gen command writes a single docker compose file that contains the bindings
+for all ultra secrets defined in each app's config package. It does not contact
+the secret provider; it merely sets the key/value pairs for the run command to
+use.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
@@ -170,14 +165,9 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
 		Short: "Resolve the given apps' secrets with a secret resolver and exec the command",
-		Long: "run resolves each app's secrets via the secret resolver named by\n" +
-			"--secret-resolver (for example 1password) and execs the given command with\n" +
-			"them set, pointing COMPOSE_FILE at the committed override that gen wrote so\n" +
-			"the secrets reach the containers. run reads each app's Config for its\n" +
-			"declared secrets but writes nothing; run `ultra gen` first to produce the\n" +
-			"override. Apps are the directories given before --, each holding a config\n" +
-			"package (name taken from the path's last element); if none are given the\n" +
-			"apps listed in .ultra.toml are used. No file and no secret is written to disk.",
+		Long: `The run command resolves each app's secrets from the secret provider and execs
+your command with them set. It reads the bindings the gen command wrote so the
+secrets reach your containers, so run gen first. It writes nothing to disk.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
@@ -227,12 +217,10 @@ func newValidateCmd(fc fileConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "validate [app-path...] --secret-resolver <name> [flags]",
 		Short: "Resolve the given apps' secrets and config and validate each app's Config",
-		Long: "validate resolves secrets the same way as run (--secret-resolver), but rather\n" +
-			"than starting containers it reconstructs the environment each app would boot\n" +
-			"with, its non-secret config from --config-resolver (docker-compose by default)\n" +
-			"plus its resolved secrets, and checks that ultra.Load parses the app's Config.\n" +
-			"Apps are the directories given as arguments, or those listed in .ultra.toml\n" +
-			"when none are given. It reports each app and exits non-zero if any fail.",
+		Long: `The validate command checks that each app boots with a complete config. It
+resolves every secret, reconstructs the environment the app would start with,
+and confirms the app's Config parses. It exits non-zero if any app is missing a
+value or won't parse.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
@@ -289,14 +277,11 @@ func newLintCmd(fc fileConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lint [app-path...] --secret-resolver <name> [flags]",
 		Short: "Statically check each app has no required key its resolvers won't provide",
-		Long: "lint checks that every required config key an app declares is provided:\n" +
-			"secrets by --secret-resolver, non-secret config by --config-resolver, by\n" +
-			"comparing the declared keys against the keys those resolvers offer. Unlike\n" +
-			"validate it never parses values or runs the app's config, so it works where\n" +
-			"the real secret values aren't reachable, such as CI with a resolver that\n" +
-			"reads declared keys from deployment manifests. Apps are the directories\n" +
-			"given as arguments, or those in .ultra.toml when none are given. It reports\n" +
-			"each app and exits non-zero if any required key is unprovided.",
+		Long: `The lint command checks that every required config key an app declares is
+provided, without resolving or parsing any values. Because it never reads a
+value, it works where the real secrets aren't reachable, like CI. It exits
+non-zero if a required key is missing. However, it does not validate that the secrets
+themselves are present in the secret provider, like validate does.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
