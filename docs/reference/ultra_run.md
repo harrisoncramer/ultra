@@ -5,8 +5,11 @@ Resolve the given apps' secrets with a secret resolver and exec the command
 ### Synopsis
 
 The run command resolves each app's secrets from the secret provider and execs
-your command with them set. It reads the bindings the gen command wrote so the
-secrets reach your containers, so run gen first. It writes nothing to disk.
+your command with them set. On every run it regenerates a names-only docker
+compose override from each app's Config into a temporary directory and points
+COMPOSE_FILE at it, so docker interpolates the resolved secrets into your
+containers. The override is derived from the code each time, so it is always
+current; no secret value is written to disk.
 
 ```
 ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...

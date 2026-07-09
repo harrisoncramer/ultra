@@ -29,10 +29,10 @@ func newFixture(t *testing.T, template string) *fixture {
 	return &fixture{root: root}
 }
 
-// overrideName is the file gen writes the combined compose override to.
+// overrideName is the file run regenerates the combined compose override to.
 const overrideName = "ultra.compose.yml"
 
-// overridePath is where gen writes the combined override under the default dir.
+// overridePath is where run writes the combined override under the default dir.
 func (f *fixture) overridePath() string {
 	return filepath.Join(f.root, "tmp", overrideName)
 }

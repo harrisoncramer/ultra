@@ -30,23 +30,16 @@ Type "bat apps/worker/config/config.go"
 Enter
 Sleep 5s
 
-Type "# Next, use `ultra gen` to build a Docker compose override."
-Enter
-Sleep 2.5s
-Type "ultra gen apps/worker"
-Enter
-Sleep 3.5s
-Type "# The override maps each secret to a launcher variable."
-Enter
-Sleep 2.5s
-Type "bat tmp/ultra.compose.yml"
-Enter
-Sleep 5s
-
-Type "# Next, use `ultra run` to resolve secrets from your provider (like 1password, aws, etc) into your service, purely in memory."
+Type "# Then run your command. ultra regenerates a compose override from your Config and resolves secrets from your provider (1password, aws, ...) in one step, purely in memory."
 Enter
 Sleep 2.5s
 Type "ultra run apps/worker --secret-resolver env -- sh -c 'printenv | grep ULTRA_WORKER__'"
+Enter
+Sleep 5s
+Type "# The override it regenerated maps each secret to a launcher variable; values never touch it."
+Enter
+Sleep 2.5s
+Type "bat tmp/ultra.compose.yml"
 Enter
 Sleep 5s
 Type "# Nothing was written to disk, and drift is impossible. The config package is your source of truth, and values reach only the process you launched."
