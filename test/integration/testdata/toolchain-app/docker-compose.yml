@@ -1,0 +1,7 @@
+services:
+  svc:
+    image: busybox
+    environment:
+      LOG_LEVEL: info
+      GOFLAGS: -mod=vendor
+    command: ["true"]

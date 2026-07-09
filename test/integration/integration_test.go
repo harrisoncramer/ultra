@@ -35,6 +35,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("validate redacts a malformed secret value", r.validateRedactsMalformedValue)
 	t.Run("run binds a secret under its envPrefix", r.runBindsPrefixedSecret)
 	t.Run("validate passes an app with an envPrefix secret", r.validatePassesPrefixedSecret)
+	t.Run("validate is not corrupted by a toolchain env var in compose", r.validateIgnoresToolchainEnv)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -400,6 +401,28 @@ func (r *Rig) validatePassesPrefixedSecret(t *testing.T) {
 	}
 	if !strings.Contains(res.output, "ok    web") {
 		t.Errorf("expected web to validate ok:\n%s", res.output)
+	}
+}
+
+func (r *Rig) validateIgnoresToolchainEnv(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "toolchain-app")
+
+	// The app's compose sets GOFLAGS=-mod=vendor as ordinary app config. It must
+	// not leak into the environment ultra builds the validation program with, or
+	// the go toolchain fails on a nonexistent vendor dir and validate reports a
+	// spurious failure that has nothing to do with the app's Config.
+	if err := s.Seed("svc", map[string]string{"SVC_TOKEN": "tok"}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"validate", "apps/svc", "--root", f.root}, s.addrFlags()...)
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("a compose toolchain var must not corrupt validate's build:\n%s", res.output)
+	}
+	if !strings.Contains(res.output, "ok    svc") {
+		t.Errorf("expected svc to validate ok:\n%s", res.output)
 	}
 }
 
