@@ -6,7 +6,6 @@ import (
 	"github.com/caarlos0/env/v10"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/composed"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/crosspkg"
-	"github.com/harrisoncramer/ultra/pkg/testdata/scan/dupsecret"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/flat"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/prefixed"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/scoped"
@@ -36,7 +35,6 @@ func TestFieldsMatchesEnvGetFieldParams(t *testing.T) {
 		{"prefixed", &prefixed.Config{}},
 		{"scoped", &scoped.Config{}},
 		{"unexported", &unexported.Config{}},
-		{"dupsecret", &dupsecret.Config{}},
 		{"sharedreq", &sharedreq.Config{}},
 	}
 	for _, c := range cases {

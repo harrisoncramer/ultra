@@ -55,8 +55,11 @@ func Fields(dir string) ([]Field, error) {
 
 	var fields []Field
 	var badEnvTag []string
+	// conflicting collects names declared both as a secret and as non-secret
+	// config by different fields; that is a hard error, reported after the scan.
+	conflicting := map[string]struct{}{}
 	// seenIdx maps a final env name to its slot in fields, so a name declared by
-	// more than one reachable field is merged into one entry rather than the first
+	// more than one reachable field lands on one entry rather than the first
 	// occurrence silently winning.
 	seenIdx := map[string]int{}
 	visited := map[visitKey]bool{}
@@ -108,12 +111,17 @@ func Fields(dir string) ([]Field, error) {
 				continue
 			}
 			secret := tag.Get("secret") == "true"
-			// caarlos0/env populates every field carrying this env name from the one
-			// variable, so it is secret if any declares it secret and required in the
-			// union of the scopes any of them require. Merging keeps visit order from
-			// silently deciding either.
 			if idx, dup := seenIdx[name]; dup {
-				fields[idx].Secret = fields[idx].Secret || secret
+				// The same env name is resolved from exactly one source: the secret
+				// store if secret, the config map otherwise. A name declared both ways
+				// by different fields is contradictory, so fail rather than guess.
+				if fields[idx].Secret != secret {
+					conflicting[name] = struct{}{}
+					continue
+				}
+				// Same-source duplicates are fine; caarlos0/env populates every field
+				// carrying the name from the one variable, so it is required in the
+				// union of the scopes any of them require.
 				fields[idx].RequiredEnvs = unionEnvs(fields[idx].RequiredEnvs, requiredEnvs)
 				continue
 			}
@@ -130,6 +138,14 @@ func Fields(dir string) ([]Field, error) {
 	if len(badEnvTag) > 0 {
 		sort.Strings(badEnvTag)
 		return nil, fmt.Errorf("config at %s: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead", dir, strings.Join(badEnvTag, ", "))
+	}
+	if len(conflicting) > 0 {
+		names := make([]string, 0, len(conflicting))
+		for name := range conflicting {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return nil, fmt.Errorf("config at %s: %s declared both as a secret and as non-secret config; a name is resolved from one source, so tag it secret:\"true\" in every field that declares it or in none", dir, strings.Join(names, ", "))
 	}
 	return fields, nil
 }
