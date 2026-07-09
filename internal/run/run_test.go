@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -57,12 +58,7 @@ func resolverFor(values map[string]string) func(string) resolve.SecretResolver {
 
 func hasEnv(env []string, key, val string) bool {
 	want := key + "=" + val
-	for _, e := range env {
-		if e == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(env, want)
 }
 
 // writeOverride simulates gen having written the committed override for app with
