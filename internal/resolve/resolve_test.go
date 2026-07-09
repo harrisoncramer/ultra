@@ -191,14 +191,43 @@ func TestLayeredConfigResolverOverrideWins(t *testing.T) {
 
 func TestLiteralLeaks(t *testing.T) {
 	env := map[string]string{
-		"HARDCODED":  "sk_live_abc123",
-		"FORWARDED":  "${DATABASE_URL}",
-		"PARTIAL":    "prefix-${TOKEN}",
-		"EMPTY":      "",
-		"NON_SECRET": "info",
+		"HARDCODED":      "sk_live_abc123",
+		"FORWARDED":      "${DATABASE_URL}",
+		"PARTIAL":        "prefix-${TOKEN}",
+		"BARE_FORWARD":   "$DATABASE_URL",
+		"ESCAPED_DOLLAR": "pa$$word",
+		"ESCAPED_BRACE":  "pre$${SUFFIX}",
+		"EMPTY":          "",
+		"NON_SECRET":     "info",
 	}
-	got := literalLeaks(env, []string{"HARDCODED", "FORWARDED", "PARTIAL", "EMPTY", "ABSENT"})
-	assert.Equal(t, []string{"HARDCODED"}, got)
+	got := literalLeaks(env, []string{"HARDCODED", "FORWARDED", "PARTIAL", "BARE_FORWARD", "ESCAPED_DOLLAR", "ESCAPED_BRACE", "EMPTY", "ABSENT"})
+	// A bare-dollar forward is a reference, not a leak; an escaped $$ is a literal
+	// dollar, so those values are hardcoded secrets that must be flagged.
+	assert.Equal(t, []string{"HARDCODED", "ESCAPED_DOLLAR", "ESCAPED_BRACE"}, got)
+}
+
+func TestHasVarReference(t *testing.T) {
+	cases := []struct {
+		v    string
+		want bool
+	}{
+		{"${VAR}", true},
+		{"$VAR", true},
+		{"prefix-${TOKEN}-suffix", true},
+		{"a$VAR", true},
+		{"${VAR:-default}", true},
+		{"sk_live_abc123", false},
+		{"pa$$word", false},
+		{"pre$${SUFFIX}", false},
+		{"trailing$", false},
+		{"$1000", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		t.Run(c.v, func(t *testing.T) {
+			assert.Equal(t, c.want, hasVarReference(c.v))
+		})
+	}
 }
 
 // leakyConfigResolver is a config resolver that also reports a fixed set of
