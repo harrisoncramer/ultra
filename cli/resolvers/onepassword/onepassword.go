@@ -53,8 +53,10 @@ type opItem struct {
 }
 
 // Resolve fetches the whole item once and picks out the requested field labels.
-// A missing vault or item is a fatal error; a missing individual field is simply
-// omitted from the result.
+// A missing item is reported as ErrSecretNotFound so an override falls through to
+// the base resolver while a base resolver treats it as fatal; a missing vault, an
+// auth failure, or an unreachable op is fatal. A missing individual field is
+// simply omitted from the result.
 func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]string, error) {
 	if o.vault == "" {
 		return nil, fmt.Errorf("1password requires --vault")
@@ -67,16 +69,35 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 	opMu.Lock()
 	err := cmd.Run()
 	opMu.Unlock()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
+
+	return o.pick(opResult{err: err, stdout: stdout.Bytes(), stderr: stderr.String()}, names)
+}
+
+// opResult is the raw outcome of one `op item get`, kept separate from the exec
+// so the field selection and error classification can be tested without invoking
+// the op CLI.
+type opResult struct {
+	err    error
+	stdout []byte
+	stderr string
+}
+
+// pick turns a completed op invocation into the requested secrets, reporting a
+// missing item as ErrSecretNotFound and any other failure as a plain error.
+func (o onePassword) pick(res opResult, names []string) (map[string]string, error) {
+	if res.err != nil {
+		msg := strings.TrimSpace(res.stderr)
 		if msg == "" {
-			msg = err.Error()
+			msg = res.err.Error()
+		}
+		if itemNotFound(msg) {
+			return nil, fmt.Errorf("op item get %q in vault %q: %s: %w", o.item, o.vault, msg, cli.ErrSecretNotFound)
 		}
 		return nil, fmt.Errorf("op item get %q in vault %q: %s", o.item, o.vault, msg)
 	}
 
 	var item opItem
-	if err := json.Unmarshal(stdout.Bytes(), &item); err != nil {
+	if err := json.Unmarshal(res.stdout, &item); err != nil {
 		return nil, fmt.Errorf("parsing 1password item %q: %w", o.item, err)
 	}
 
@@ -92,4 +113,11 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 		}
 	}
 	return out, nil
+}
+
+// itemNotFound reports whether op failed only because the vault has no such item,
+// the case where an override does not cover this app, as opposed to a missing
+// vault, an auth failure, or op being unreachable.
+func itemNotFound(stderr string) bool {
+	return strings.Contains(stderr, "isn't an item in the")
 }

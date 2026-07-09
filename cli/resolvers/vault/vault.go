@@ -68,8 +68,10 @@ type vaultResponse struct {
 }
 
 // Resolve fetches the app's secret once over the KV v2 read API and picks out the
-// requested keys. A missing address/token, or an unreachable/permission-denied
-// Vault, is fatal; a missing individual key is simply omitted from the result.
+// requested keys. A missing secret (404) is reported as ErrSecretNotFound so an
+// override falls through to the base resolver while a base resolver treats it as
+// fatal; a missing address/token, or an unreachable/permission-denied Vault, is
+// fatal, and a missing individual key is simply omitted from the result.
 func (v vaultKV) Resolve(ctx context.Context, names []string) (map[string]string, error) {
 	addr := v.address
 	if addr == "" {
@@ -103,6 +105,9 @@ func (v vaultKV) Resolve(ctx context.Context, names []string) (map[string]string
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("vault read %s/%s: %s: %w", v.mount, v.app, resp.Status, cli.ErrSecretNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("vault read %s/%s: %s: %s", v.mount, v.app, resp.Status, strings.TrimSpace(string(body)))
 	}
