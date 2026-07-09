@@ -78,7 +78,6 @@ func TestFields(t *testing.T) {
 		{"prefixed non-secret carries its prefix", "prefixed", "DB_HOST", nil, false},
 		{"reused type under a second prefix", "prefixed", "REPLICA_PASSWORD", nil, true},
 		{"embedded struct stacks its prefix", "prefixed", "SVC_TOKEN", nil, true},
-		{"shared struct unions required scopes", "sharedreq", "SHARED_TOKEN", []string{"production"}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -145,6 +144,16 @@ func TestFieldsRejectsSecretConfigConflict(t *testing.T) {
 	require.Error(t, err, "a name declared as both secret and non-secret config must be rejected, not merged")
 	assert.Contains(t, err.Error(), "SHARED_URL")
 	assert.Contains(t, err.Error(), "both as a secret and as non-secret config")
+}
+
+func TestFieldsRejectsSameSourceRedeclaration(t *testing.T) {
+	// sharedreq declares SHARED_TOKEN via two fields, both secret, with different
+	// required scopes. Rather than silently join the scopes (a hard-to-track bug),
+	// the redeclaration is rejected with its own message.
+	_, err := Fields(fixtureDir("sharedreq"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SHARED_TOKEN")
+	assert.Contains(t, err.Error(), "declared by more than one field")
 }
 
 type importPathCase struct {

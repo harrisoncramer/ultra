@@ -1,7 +1,8 @@
 package sharedreq
 
-// Shared is embedded through two fields carrying different required scopes. Its
-// TOKEN is required in the union of those scopes.
+// Shared is declared through two fields carrying different required scopes, so
+// SHARED_TOKEN is declared twice from the same source: a redeclaration the scan
+// rejects rather than guessing which scope applies.
 type Shared struct {
 	Token string `env:"SHARED_TOKEN" secret:"true"`
 }

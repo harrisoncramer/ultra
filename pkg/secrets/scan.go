@@ -55,13 +55,14 @@ func Fields(dir string) ([]Field, error) {
 
 	var fields []Field
 	var badEnvTag []string
-	// conflicting collects names declared both as a secret and as non-secret
-	// config by different fields; that is a hard error, reported after the scan.
+	// A duplicate env name is always an error, reported after the scan, but with
+	// two distinct messages: conflicting names are declared with differing
+	// secret-ness (resolved from two sources at once), redeclared names with the
+	// same secret-ness (a plain collision). declaredSecret records each name's
+	// first-seen secret-ness and doubles as the seen set.
 	conflicting := map[string]struct{}{}
-	// seenIdx maps a final env name to its slot in fields, so a name declared by
-	// more than one reachable field lands on one entry rather than the first
-	// occurrence silently winning.
-	seenIdx := map[string]int{}
+	redeclared := map[string]struct{}{}
+	declaredSecret := map[string]bool{}
 	visited := map[visitKey]bool{}
 
 	var visit func(s *types.Struct, prefix string, inherited []string)
@@ -111,21 +112,21 @@ func Fields(dir string) ([]Field, error) {
 				continue
 			}
 			secret := tag.Get("secret") == "true"
-			if idx, dup := seenIdx[name]; dup {
-				// The same env name is resolved from exactly one source: the secret
-				// store if secret, the config map otherwise. A name declared both ways
-				// by different fields is contradictory, so fail rather than guess.
-				if fields[idx].Secret != secret {
+			if prevSecret, dup := declaredSecret[name]; dup {
+				// The same env name can't come from two fields: caarlos0/env would set
+				// both from one variable. If the two disagree on secret-ness the name
+				// would be resolved from both the store and the config map at once; if
+				// they agree it is a plain redeclaration. Either way, refuse rather
+				// than silently pick a winner (or quietly join their required scopes),
+				// which hides the mistake and is hard to track down later.
+				if prevSecret != secret {
 					conflicting[name] = struct{}{}
-					continue
+				} else if _, isConflict := conflicting[name]; !isConflict {
+					redeclared[name] = struct{}{}
 				}
-				// Same-source duplicates are fine; caarlos0/env populates every field
-				// carrying the name from the one variable, so it is required in the
-				// union of the scopes any of them require.
-				fields[idx].RequiredEnvs = unionEnvs(fields[idx].RequiredEnvs, requiredEnvs)
 				continue
 			}
-			seenIdx[name] = len(fields)
+			declaredSecret[name] = secret
 			fields = append(fields, Field{
 				Name:         name,
 				Secret:       secret,
@@ -140,36 +141,19 @@ func Fields(dir string) ([]Field, error) {
 		return nil, fmt.Errorf("config at %s: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead", dir, strings.Join(badEnvTag, ", "))
 	}
 	if len(conflicting) > 0 {
-		names := make([]string, 0, len(conflicting))
-		for name := range conflicting {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		return nil, fmt.Errorf("config at %s: %s declared both as a secret and as non-secret config; a name is resolved from one source, so tag it secret:\"true\" in every field that declares it or in none", dir, strings.Join(names, ", "))
+		return nil, fmt.Errorf("config at %s: %s declared both as a secret and as non-secret config; a name is resolved from one source, so tag it secret:\"true\" in every field that declares it or in none", dir, strings.Join(sortedKeys(conflicting), ", "))
+	}
+	if len(redeclared) > 0 {
+		return nil, fmt.Errorf("config at %s: %s declared by more than one field; each env name must be declared exactly once", dir, strings.Join(sortedKeys(redeclared), ", "))
 	}
 	return fields, nil
 }
 
-// unionEnvs merges two required-scope lists: a field required in the scopes of
-// any path that declares it. "*" (required everywhere) absorbs the rest, and two
-// empty lists stay nil (never required). The result is sorted for determinism.
-func unionEnvs(a, b []string) []string {
-	set := make(map[string]struct{}, len(a)+len(b))
-	for _, e := range a {
-		set[e] = struct{}{}
-	}
-	for _, e := range b {
-		set[e] = struct{}{}
-	}
-	if _, all := set["*"]; all {
-		return []string{"*"}
-	}
-	if len(set) == 0 {
-		return nil
-	}
+// sortedKeys returns the keys of set in sorted order, for a deterministic error.
+func sortedKeys(set map[string]struct{}) []string {
 	out := make([]string, 0, len(set))
-	for e := range set {
-		out = append(out, e)
+	for k := range set {
+		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out

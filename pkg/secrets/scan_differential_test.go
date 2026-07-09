@@ -9,7 +9,6 @@ import (
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/flat"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/prefixed"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/scoped"
-	"github.com/harrisoncramer/ultra/pkg/testdata/scan/sharedreq"
 	"github.com/harrisoncramer/ultra/pkg/testdata/scan/unexported"
 
 	"github.com/stretchr/testify/assert"
@@ -20,10 +19,10 @@ import (
 // own view of a Config. Fields reads env tags with go/types so it can enumerate
 // names without building the app; env.GetFieldParams reads the same tags via
 // reflection at runtime. For every fixture the set of env names must agree, so
-// any drift in how ultra parses env tags, envPrefix, or dedups shared names
-// (exactly where past scanner bugs lived) fails here rather than silently binding
-// the wrong variable. env.GetFieldParams returns one entry per field, so its keys
-// are deduped to a set before comparing with Fields, which merges shared names.
+// any drift in how ultra parses env tags or resolves envPrefix (exactly where
+// past scanner bugs lived) fails here rather than silently binding the wrong
+// variable. These fixtures declare each name once; env.GetFieldParams returns one
+// entry per field, so its keys are compared as a set.
 func TestFieldsMatchesEnvGetFieldParams(t *testing.T) {
 	cases := []struct {
 		fixture string
@@ -35,7 +34,6 @@ func TestFieldsMatchesEnvGetFieldParams(t *testing.T) {
 		{"prefixed", &prefixed.Config{}},
 		{"scoped", &scoped.Config{}},
 		{"unexported", &unexported.Config{}},
-		{"sharedreq", &sharedreq.Config{}},
 	}
 	for _, c := range cases {
 		t.Run(c.fixture, func(t *testing.T) {

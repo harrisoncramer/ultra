@@ -1,8 +1,8 @@
 package dupsecret
 
 // Base declares SHARED_URL without the secret tag; the app's own field declares
-// the same env name as a secret. env.Parse populates both from SHARED_URL, so it
-// must be treated as a secret regardless of which field the scan visits first.
+// the same env name as a secret. The name would be resolved from both the config
+// map and the secret store at once, a conflict the scan rejects.
 type Base struct {
 	Shared string `env:"SHARED_URL"`
 }
