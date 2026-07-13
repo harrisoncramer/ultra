@@ -126,9 +126,9 @@ func TestLintApp(t *testing.T) {
 			})
 			found, err := l.checkApp(context.Background(), "app")
 			require.NoError(t, err)
-			assert.Equal(t, c.wantMissing, found.missing)
-			assert.Equal(t, c.wantExtra, found.extra)
-			assert.Nil(t, found.leaked, "config resolver without leak-checking reports no leaks")
+			assert.Equal(t, c.wantMissing, found.Missing)
+			assert.Equal(t, c.wantExtra, found.Extra)
+			assert.Nil(t, found.Leaked, "config resolver without leak-checking reports no leaks")
 		})
 	}
 }
@@ -147,8 +147,8 @@ func TestLintFlagsHardcodedSecret(t *testing.T) {
 	})
 	found, err := l.checkApp(context.Background(), "app")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"SECRET_TOKEN"}, found.leaked)
-	assert.Empty(t, found.missing, "the secret is provided by the store, just also hardcoded")
+	assert.Equal(t, []string{"SECRET_TOKEN"}, found.Leaked)
+	assert.Empty(t, found.Missing, "the secret is provided by the store, just also hardcoded")
 }
 
 func TestLintNoLeakWhenSecretOnlyInStore(t *testing.T) {
@@ -164,5 +164,5 @@ func TestLintNoLeakWhenSecretOnlyInStore(t *testing.T) {
 	})
 	found, err := l.checkApp(context.Background(), "app")
 	require.NoError(t, err)
-	assert.Empty(t, found.leaked)
+	assert.Empty(t, found.Leaked)
 }
