@@ -16,7 +16,7 @@ ultra run apps/worker --secret-resolver 1password --vault MyVault -- docker comp
 
 ![ultra validate](assets/demos/validate.gif)
 
-Ultra supports validating a configuration prior to starting a container with the `validate` command. This is helpful in CI, or during local development. The `ultra validate` takes the same secret resolver and flags as `run` and checks that every app's `config.Load` succeeds. It exits non-zero if any app is missing a required value or won't parse.
+Ultra supports validating a configuration prior to starting a container with the `validate` command. This is helpful in CI, or during local development. The `ultra validate` takes the same secret resolver and flags as `run`. It is a superset of `lint`: it runs `lint`'s static checks and then does the extra work `lint` never does, reconstructing the environment and confirming each app's `config.Load` succeeds. It exits non-zero if any check fails or if the config won't parse.
 
 ```bash
 ultra validate apps/server apps/worker --secret-resolver aws-secret-manager --region us-east-1
@@ -28,7 +28,7 @@ The `validate` command also takes an optional `--reject-unreferenced` flag, whic
 
 ![ultra lint](assets/demos/lint.gif)
 
-The `lint` command is a less-strict version of the `validate` command. It takes the same resolvers as `validate` but never constructs or parses a value. It only compares the keys each app's `Config` requires against the keys its resolvers offer, and fails if a required key is unprovided.
+The `lint` command runs the same static checks as `validate`, but stops there: it never constructs or parses a value. It compares the keys each app's `Config` requires against the keys its resolvers offer and fails if a required key is unprovided, flags a `secret`-tagged field whose value is hardcoded in the non-secret config, and, with `--reject-unreferenced`, flags a provided key nothing references.
 
 While `validate` needs real secret values, because it reconstructs the environment and parses it, `lint` does not. Because it never reads a value, it can run against a resolver that reports declared keys (from deployment manifests, for instance) rather than from the store itself, so no secret access is needed.
 
@@ -43,5 +43,3 @@ The `lint` command also takes the `--reject-unreferenced` flag.
 ```bash
 ultra lint apps/server --secret-resolver aws-secret-manager --region us-east-1 --reject-unreferenced
 ```
-
-The `lint` command also fails when a `secret`-tagged field has its value hardcoded in the non-secret config, since secrets belong in the store, not committed config.

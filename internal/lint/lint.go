@@ -7,9 +7,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/internal/appcheck"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 	"github.com/harrisoncramer/ultra/internal/scan"
@@ -31,12 +31,8 @@ type scanner interface {
 
 // Linter checks each app's required keys against what its resolvers provide.
 type Linter struct {
-	scanner            scanner
-	project            project.Project
-	environment        string
-	rejectUnreferenced bool
-	secretResolver     func(app string) resolve.SecretResolver
-	configResolver     resolve.ConfigResolver
+	checker *appcheck.Checker
+	project project.Project
 }
 
 // NewLinterParams are the dependencies and options NewLinter needs.
@@ -52,23 +48,16 @@ type NewLinterParams struct {
 // NewLinter builds a Linter.
 func NewLinter(params NewLinterParams) *Linter {
 	return &Linter{
-		scanner:            params.Scanner,
-		project:            params.Project,
-		environment:        params.Environment,
-		rejectUnreferenced: params.RejectUnreferenced,
-		secretResolver:     params.SecretResolver,
-		configResolver:     params.ConfigResolver,
+		checker: appcheck.NewChecker(appcheck.NewCheckerParams{
+			Scanner:            params.Scanner,
+			Project:            params.Project,
+			Environment:        params.Environment,
+			RejectUnreferenced: params.RejectUnreferenced,
+			SecretResolver:     params.SecretResolver,
+			ConfigResolver:     params.ConfigResolver,
+		}),
+		project: params.Project,
 	}
-}
-
-// findings is what checkApp reports for one app: the required keys no resolver
-// provides, the secrets found hardcoded in the non-secret config, and, when
-// rejectUnreferenced is set, the keys a resolver provides that no Config field
-// references.
-type findings struct {
-	missing []string
-	leaked  []string
-	extra   []string
 }
 
 // Lint checks that every required key each app declares will be provided, and
@@ -82,7 +71,7 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 	// return an error (that would cancel the group); each app's result lands in
 	// its own slot and is reported in input order.
 	type result struct {
-		found findings
+		found appcheck.Findings
 		err   error
 	}
 	results := make([]result, len(apps))
@@ -91,8 +80,8 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 
 	for i, appPath := range apps {
 		g.Go(func() error {
-			found, err := l.checkApp(ctx, appPath)
-			results[i] = result{found: found, err: err}
+			r, err := l.checker.Check(ctx, appPath)
+			results[i] = result{found: r.Findings, err: err}
 			return nil
 		})
 	}
@@ -106,19 +95,9 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 		case err != nil:
 			failed++
 			fmt.Fprintf(os.Stderr, "FAIL  %s: %v\n", app, err)
-		case len(found.missing) > 0 || len(found.leaked) > 0 || len(found.extra) > 0:
+		case !found.OK():
 			failed++
-			var problems []string
-			if len(found.missing) > 0 {
-				problems = append(problems, "missing required keys: "+strings.Join(found.missing, ", "))
-			}
-			if len(found.leaked) > 0 {
-				problems = append(problems, "secrets hardcoded in non-secret config: "+strings.Join(found.leaked, ", "))
-			}
-			if len(found.extra) > 0 {
-				problems = append(problems, "unreferenced keys provided: "+strings.Join(found.extra, ", "))
-			}
-			fmt.Fprintf(os.Stderr, "FAIL  %s: %s\n", app, strings.Join(problems, "; "))
+			fmt.Fprintf(os.Stderr, "FAIL  %s: %s\n", app, strings.Join(found.Problems(), "; "))
 		default:
 			fmt.Fprintf(os.Stderr, "ok    %s\n", app)
 		}
@@ -128,79 +107,4 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 		return fmt.Errorf("%d app(s) failed lint", failed)
 	}
 	return nil
-}
-
-// checkApp reports the required keys app declares that neither resolver provides,
-// the secrets whose value is hardcoded in the non-secret config, and, when
-// rejectUnreferenced is set, the keys a resolver provides that no Config field
-// references. Secret fields are checked against the secret resolver's keys and
-// non-secret fields against the config resolver's; the resolved values
-// themselves are ignored, only the presence of each key matters.
-func (l *Linter) checkApp(ctx context.Context, appPath string) (findings, error) {
-	app := l.project.AppName(appPath)
-
-	fields, err := l.scanner.Fields(l.project.AppConfigDir(appPath))
-	if err != nil {
-		return findings{}, err
-	}
-
-	// TODO(@harrisoncramer): This logic and the logic in lint should be shared. Right now for instance the
-	// validate command is a superset of the checkApp -- it should do all this, plus the checks to actually load
-	// the application. Right now that's not the case. The validate command is for instance not running checks
-	// against leaked secrets.
-
-	var secretNames []string
-	for _, f := range fields {
-		if f.IsSecret {
-			secretNames = append(secretNames, f.Name)
-		}
-	}
-
-	secretVals := map[string]string{}
-	if len(secretNames) > 0 {
-		secretVals, err = l.secretResolver(app).Resolve(ctx, secretNames)
-		if err != nil {
-			return findings{}, err
-		}
-	}
-
-	configVals, err := l.configResolver.Resolve(ctx, app)
-	if err != nil {
-		return findings{}, err
-	}
-
-	var missing []string
-	for _, f := range fields {
-		if !f.RequiredIn(l.environment) {
-			continue
-		}
-		provided := configVals
-		if f.IsSecret {
-			provided = secretVals
-		}
-		if _, ok := provided[f.Name]; !ok {
-			missing = append(missing, f.Name)
-		}
-	}
-	sort.Strings(missing)
-
-	// A secret whose value lives in the non-secret config is a leak: secrets are
-	// meant to come from the store, not committed config. Only resolvers that can
-	// tell a literal from a forwarded reference (docker-compose) report these.
-	var leaked []string
-	if lc, ok := l.configResolver.(resolve.SecretLeakChecker); ok && len(secretNames) > 0 {
-		leaked, err = lc.LeakedSecrets(ctx, app, secretNames)
-		if err != nil {
-			return findings{}, err
-		}
-		sort.Strings(leaked)
-	}
-
-	var extra []string
-	if l.rejectUnreferenced {
-		declared := scan.DeclaredNames(fields)
-		extra = append(scan.Unreferenced(secretVals, declared), scan.Unreferenced(configVals, declared)...)
-		sort.Strings(extra)
-	}
-	return findings{missing: missing, leaked: leaked, extra: extra}, nil
 }

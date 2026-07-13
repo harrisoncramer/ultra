@@ -4,10 +4,10 @@ Resolve the given apps' secrets and config and validate each app's Config
 
 ### Synopsis
 
-The validate command checks that each app boots with a complete config. It
-resolves every secret, reconstructs the environment the app would start with,
-and confirms the app's Config parses. It exits non-zero if any app is missing a
-value or won't parse.
+The validate command checks that each app boots with a complete config. It is
+a superset of lint: it runs lint's static checks, then reconstructs the
+environment the app would start with and confirms the app's Config parses. It
+exits non-zero if any check fails or the config won't parse.
 
 ```
 ultra validate [app-path...] --secret-resolver <name> [flags]

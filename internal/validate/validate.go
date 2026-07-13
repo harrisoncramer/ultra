@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/harrisoncramer/ultra/internal/appcheck"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
 	"github.com/harrisoncramer/ultra/internal/scan"
@@ -26,26 +27,24 @@ import (
 // `go run` builds simultaneously.
 const maxConcurrentApps = 8
 
-// scanner reports an app's declared fields and its config package import path.
+// scanner reports an app's config package import path, which validate needs to
+// generate the throwaway program that loads its Config.
 type scanner interface {
-	Fields(dir string) ([]scan.Field, error)
 	ConfigImportPath(dir string) (string, error)
 }
 
 // Validator checks that each app's Config parses against its reconstructed
 // environment.
 type Validator struct {
-	scanner            scanner
-	project            project.Project
-	environment        string
-	rejectUnreferenced bool
-	secretResolver     func(app string) resolve.SecretResolver
-	configResolver     resolve.ConfigResolver
+	checker     *appcheck.Checker
+	scanner     scanner
+	project     project.Project
+	environment string
 }
 
 // NewValidatorParams are the dependencies and options NewValidator needs.
 type NewValidatorParams struct {
-	Scanner            scanner
+	Scanner            fullScanner
 	Project            project.Project
 	Environment        string
 	RejectUnreferenced bool
@@ -53,15 +52,27 @@ type NewValidatorParams struct {
 	ConfigResolver     resolve.ConfigResolver
 }
 
+// fullScanner is the scanner the caller supplies: it reports both an app's
+// declared fields (used by the shared checker) and its config import path (used
+// by validate to build the loader program).
+type fullScanner interface {
+	Fields(dir string) ([]scan.Field, error)
+	ConfigImportPath(dir string) (string, error)
+}
+
 // NewValidator builds a Validator.
 func NewValidator(params NewValidatorParams) *Validator {
 	return &Validator{
-		scanner:            params.Scanner,
-		project:            params.Project,
-		environment:        params.Environment,
-		rejectUnreferenced: params.RejectUnreferenced,
-		secretResolver:     params.SecretResolver,
-		configResolver:     params.ConfigResolver,
+		checker: appcheck.NewChecker(appcheck.NewCheckerParams{
+			Scanner:            params.Scanner,
+			Project:            params.Project,
+			RejectUnreferenced: params.RejectUnreferenced,
+			SecretResolver:     params.SecretResolver,
+			ConfigResolver:     params.ConfigResolver,
+		}),
+		scanner:     params.Scanner,
+		project:     params.Project,
+		environment: params.Environment,
 	}
 }
 
@@ -103,73 +114,32 @@ func (v *Validator) Validate(ctx context.Context, apps []string) error {
 // validateApp reconstructs one app's boot environment, optionally rejects
 // unreferenced keys, then builds and runs a tiny program that loads its Config.
 func (v *Validator) validateApp(ctx context.Context, appPath string) error {
-	app := v.project.AppName(appPath)
 	dir := v.project.AppConfigDir(appPath)
 	importPath, err := v.scanner.ConfigImportPath(dir)
 	if err != nil {
 		return err
 	}
-	fields, err := v.scanner.Fields(dir)
+
+	// Run the shared static check first. validate is a superset of lint: it fails
+	// on the same findings (missing required keys, hardcoded secrets, unreferenced
+	// keys), then goes on to do the extra work lint never does, actually loading
+	// the app's Config against its reconstructed environment.
+	r, err := v.checker.Check(ctx, appPath)
 	if err != nil {
 		return err
 	}
-	var names []string
-	for _, f := range fields {
-		if f.IsSecret {
-			names = append(names, f.Name)
-		}
+	if !r.Findings.OK() {
+		return fmt.Errorf("%s", strings.Join(r.Findings.Problems(), "; "))
 	}
 
 	// The full env the app would see: process env, then the platform's non-secret
-	// config, then the resolved scan (real names); later writes win.
+	// config, then the resolved secrets (real names); later writes win.
 	env := os.Environ()
-
-	configVals, err := v.configResolver.Resolve(ctx, app)
-	if err != nil {
-		return err
-	}
-	for k, val := range configVals {
+	for k, val := range r.ConfigVals {
 		env = append(env, k+"="+val)
 	}
-
-	// Only hit the secret store if the app actually declares scan; an app with
-	// none (e.g. no secret-tagged fields) has no vault item to fetch.
-	var secretVals map[string]string
-	if len(names) > 0 {
-		secretVals, err = v.secretResolver(app).Resolve(ctx, names)
-		if err != nil {
-			return err
-		}
-		for k, val := range secretVals {
-			env = append(env, k+"="+val)
-		}
-	}
-
-	// A secret whose value is hardcoded in the non-secret config is a leak: the
-	// same name is claimed by both the secret store and the committed config, and
-	// the value belongs only in the store. lint reports this; fail it here too so
-	// validate on its own still catches it.
-	if lc, ok := v.configResolver.(resolve.SecretLeakChecker); ok && len(names) > 0 {
-		leaked, err := lc.LeakedSecrets(ctx, app, names)
-		if err != nil {
-			return err
-		}
-		if len(leaked) > 0 {
-			sort.Strings(leaked)
-			return fmt.Errorf("scan hardcoded in non-secret config: %s", strings.Join(leaked, ", "))
-		}
-	}
-
-	// With rejectUnreferenced, a resolver handing back a key no Config field reads
-	// is a config drift, a stale compose var or a vault entry nothing consumes,
-	// so fail rather than silently ignoring it.
-	if v.rejectUnreferenced {
-		declared := scan.DeclaredNames(fields)
-		extra := append(scan.Unreferenced(secretVals, declared), scan.Unreferenced(configVals, declared)...)
-		if len(extra) > 0 {
-			sort.Strings(extra)
-			return fmt.Errorf("resolvers provided unreferenced keys: %s", strings.Join(extra, ", "))
-		}
+	for k, val := range r.SecretVals {
+		env = append(env, k+"="+val)
 	}
 
 	// The generated program lives inside the app's module so it can import the
@@ -219,7 +189,7 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("%s", redactSecrets(msg, secretVals))
+			return fmt.Errorf("%s", redactSecrets(msg, r.SecretVals))
 		}
 		return err
 	}
