@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	secrets "github.com/harrisoncramer/ultra/pkg/secrets"
+	scan "github.com/harrisoncramer/ultra/internal/scan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func TestSecretEnvNames(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := secrets.SecretEnvNames(c.typ)
+			got := scan.SecretEnvNames(c.typ)
 			sort.Strings(got)
 			assert.Equal(t, c.want, got)
 		})
@@ -58,7 +58,7 @@ type loadSecretCase struct {
 func TestLoadSecretRequiredness(t *testing.T) {
 	cases := []loadSecretCase{
 		{
-			name: "env-tag required secret is rejected",
+			name: "env-tag required secret is rejected, coming from disallowed caarlos env package",
 			load: func() error {
 				type cfg struct {
 					Token string `env:"REQUIRED_SECRET_TOKEN,required,notEmpty" secret:"true"`

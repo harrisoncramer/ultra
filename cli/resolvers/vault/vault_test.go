@@ -23,10 +23,15 @@ func TestResolveMissingSecretIsSecretNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`{"errors":[]}`))
 	}))
 	defer srv.Close()
-	t.Setenv("VAULT_TOKEN", "test-token")
 
-	v := vaultKV{app: "axle", mount: "secret", address: srv.URL}
-	_, err := v.Resolve(t.Context(), []string{"DATABASE_URL"})
+	resolver := NewVaultResolver(NewVaultResolverParams{
+		App:     "axle",
+		Mount:   "secret",
+		Token:   "test-token",
+		Address: srv.URL,
+	})
+
+	_, err := resolver.Resolve(t.Context(), []string{"DATABASE_URL"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, cli.ErrSecretNotFound)
 }
@@ -86,10 +91,15 @@ func TestVaultResolve(t *testing.T) {
 				_, _ = w.Write([]byte(c.body))
 			}))
 			defer srv.Close()
-			t.Setenv("VAULT_TOKEN", "test-token")
 
-			r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
-			got, err := r.Resolve(t.Context(), c.names)
+			resolver := NewVaultResolver(NewVaultResolverParams{
+				App:     "worker",
+				Mount:   "secret",
+				Token:   "test-token",
+				Address: srv.URL,
+			})
+
+			got, err := resolver.Resolve(t.Context(), c.names)
 			if c.wantErr {
 				require.Error(t, err)
 				return
@@ -152,11 +162,16 @@ func TestVaultResolveTLS(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("VAULT_TOKEN", "test-token")
 			c.setup(t, srv)
 
-			r := vaultKV{app: "worker", mount: "secret", address: srv.URL}
-			got, err := r.Resolve(t.Context(), []string{"DATABASE_URL"})
+			resolver := NewVaultResolver(NewVaultResolverParams{
+				App:     "worker",
+				Mount:   "secret",
+				Token:   "test-token",
+				Address: srv.URL,
+			})
+
+			got, err := resolver.Resolve(t.Context(), []string{"DATABASE_URL"})
 			if c.wantErr {
 				require.Error(t, err)
 				return

@@ -39,6 +39,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("run skips an app whose name has no matching compose service", r.runSkipsAppNotInCompose)
 	t.Run("validate works with a relative root", r.validateWithRelativeRoot)
 	t.Run("validate handles a kitchen-sink config", r.validateKitchenSink)
+	t.Run("run delivers kitchen-sink secrets into the container", r.runDeliversKitchenSinkSecrets)
 }
 
 func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
@@ -522,6 +523,35 @@ func (r *Rig) validateKitchenSink(t *testing.T) {
 			}
 		}
 	})
+}
+
+func (r *Rig) runDeliversKitchenSinkSecrets(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "kitchen-sink")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	// Resolve and inject every declared secret, including OTEL_KEY which lives in
+	// the embedded Telemetry struct, and assert each value actually reaches the
+	// running container (not merely that validate accepts the config).
+	if err := s.Seed("everything", map[string]string{
+		"API_KEY":     "sk-run",
+		"PROD_SECRET": "prod-run",
+		"OTEL_KEY":    "otel-run",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	args := append([]string{"run", "apps/everything", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+	for _, want := range []string{"API_KEY=sk-run", "PROD_SECRET=prod-run", "OTEL_KEY=otel-run"} {
+		if !strings.Contains(res.output, want) {
+			t.Errorf("container did not observe %q\n%s", want, res.output)
+		}
+	}
 }
 
 func assertFileContains(t *testing.T, path, want string) {

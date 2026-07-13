@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/harrisoncramer/ultra/internal/xstring"
 )
 
 // requiredTag names the struct tag that declares which environments a field is
@@ -37,48 +39,10 @@ func WithEnvironment(environment string) Option {
 	return func(o *loadOptions) { o.environment = environment }
 }
 
-// splitEnvs parses a comma-separated required tag into its environment names.
-func splitEnvs(s string) []string {
-	raw := strings.Split(s, ",")
-	envs := make([]string, 0, len(raw))
-	for _, p := range raw {
-		if p = strings.TrimSpace(p); p != "" {
-			envs = append(envs, p)
-		}
-	}
-	if len(envs) == 0 {
-		return nil
-	}
-	return envs
-}
-
-// requiredIn reports whether a field required in requiredEnvs must be present in
-// environment: true when the field is required everywhere ("*") or names this
-// environment.
-func requiredIn(requiredEnvs []string, environment string) bool {
-	for _, e := range requiredEnvs {
-		if e == "*" || e == environment {
-			return true
-		}
-	}
-	return false
-}
-
-// hasEnvOption reports whether the comma-separated env-tag options contain want.
-func hasEnvOption(opts, want string) bool {
-	for o := range strings.SplitSeq(opts, ",") {
-		if strings.TrimSpace(o) == want {
-			return true
-		}
-	}
-	return false
-}
-
-// eachEnvField walks the config value v and invokes fn for every leaf env-var
+// walkAndCall walks the config value v and invokes fn for every leaf env-var
 // field, with the environments it is required in (its own required tag, or the
 // one inherited from the struct it is nested in) and the options of its env tag.
-// It mirrors how env.Parse descends into embedded and nested structs.
-func eachEnvField(v reflect.Value, inherited []string, seen map[reflect.Type]bool, fn func(name, envOpts string, requiredEnvs []string, val reflect.Value)) {
+func walkAndCall(v reflect.Value, inherited []string, seen map[reflect.Type]bool, fn func(name, envOpts string, requiredEnvs []string, val reflect.Value)) {
 	for v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
@@ -98,14 +62,14 @@ func eachEnvField(v reflect.Value, inherited []string, seen map[reflect.Type]boo
 		f := t.Field(i)
 		requiredEnvs := inherited
 		if r, ok := f.Tag.Lookup(requiredTag); ok {
-			requiredEnvs = splitEnvs(r)
+			requiredEnvs = xstring.SplitBy(r, ",")
 		}
 		ft := f.Type
 		for ft.Kind() == reflect.Pointer {
 			ft = ft.Elem()
 		}
 		if ft.Kind() == reflect.Struct {
-			eachEnvField(v.Field(i), requiredEnvs, seen, fn)
+			walkAndCall(v.Field(i), requiredEnvs, seen, fn)
 			continue
 		}
 		if envTag, ok := f.Tag.Lookup("env"); ok {
@@ -117,29 +81,40 @@ func eachEnvField(v reflect.Value, inherited []string, seen map[reflect.Type]boo
 	}
 }
 
-// envTagRequiredFields returns the names of fields that declare required or
+// hasDisallowedRequiredOrNotEmpty returns the names of fields that declare required or
 // notEmpty inside their env tag. Required-ness must be declared with the required
-// tag instead, so that it can be environment-aware and live in one place; env's
-// own required is unconditional and would enforce the field in every environment
-// behind ultra's back.
-func envTagRequiredFields(cfg any) []string {
+// tag from ultra's library, rather than the caarlos0/env library's notEmpty helper,
+// which ultra specifically  disallows in order to provide a uniform required syntax across environments.
+func hasDisallowedRequiredOrNotEmpty(cfg any) []string {
 	var out []string
-	eachEnvField(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, envOpts string, _ []string, _ reflect.Value) {
-		if hasEnvOption(envOpts, "required") || hasEnvOption(envOpts, "notEmpty") {
-			out = append(out, name)
+	walkAndCall(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, envOpts string, _ []string, _ reflect.Value) {
+		for o := range strings.SplitSeq(envOpts, ",") {
+			if strings.TrimSpace(o) == "required" || strings.TrimSpace(o) == "notEmpty" {
+				out = append(out, name)
+				continue
+			}
 		}
 	})
 	sort.Strings(out)
 	return out
 }
 
-// missingRequired returns the env-var names of fields required in environment
+// requiredButMissingValue returns the env-var names of fields required in environment
 // whose parsed value is empty. A field is required in the environments named by
 // its required tag ("*" meaning all); outside them it is ignored.
-func missingRequired(cfg any, environment string) []string {
+func requiredButMissingValue(cfg any, environment string) []string {
 	var out []string
-	eachEnvField(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, _ string, requiredEnvs []string, val reflect.Value) {
-		if requiredIn(requiredEnvs, environment) && val.IsZero() {
+	walkAndCall(reflect.ValueOf(cfg), nil, map[reflect.Type]bool{}, func(name, _ string, requiredEnvs []string, val reflect.Value) {
+
+		isRequiredForEnvironment := false
+		for _, e := range requiredEnvs {
+			if e == "*" || e == environment {
+				isRequiredForEnvironment = true
+				break
+			}
+		}
+
+		if isRequiredForEnvironment && val.IsZero() {
 			out = append(out, name)
 		}
 	})

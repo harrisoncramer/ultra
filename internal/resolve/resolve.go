@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -110,12 +111,8 @@ func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map
 // corrupt the cache and race a concurrent read.
 func mergeOver(base, override map[string]string) map[string]string {
 	merged := make(map[string]string, len(base)+len(override))
-	for k, v := range base {
-		merged[k] = v
-	}
-	for k, v := range override {
-		merged[k] = v
-	}
+	maps.Copy(merged, base)
+	maps.Copy(merged, override)
 	return merged
 }
 
@@ -155,4 +152,53 @@ func applyFlagSet(fs *pflag.FlagSet, vals map[string]string) {
 			_ = f.Value.Set(v)
 		}
 	})
+}
+
+// NewFakeSecretResolver returns a resolver that merely returns back the values provided.
+func NewFakeSecretResolver(values map[string]string) fakeSecretResolver {
+	return fakeSecretResolver{
+		have: values,
+	}
+}
+
+var _ SecretResolver = (*fakeSecretResolver)(nil)
+
+// fakeSecretResolver returns a resolver that just echos back the set of secrets provided.
+type fakeSecretResolver struct {
+	have map[string]string
+}
+
+func (f fakeSecretResolver) Resolve(context.Context, []string) (map[string]string, error) {
+	return f.have, nil
+}
+
+var _ ConfigResolver = (*fakeConfigResolver)(nil)
+var _ SecretLeakChecker = (*fakeConfigResolver)(nil)
+
+type NewFakeConfigResolverParams struct {
+	Values       map[string]string
+	LeakedValues []string
+}
+
+// NewFakeSecretResolver returns a resolver that merely returns back the values provided.
+// Provide leaked config secrets to simulate those that have leaked
+func NewFakeConfigResolver(params NewFakeConfigResolverParams) *fakeConfigResolver {
+	return &fakeConfigResolver{
+		have:   params.Values,
+		leaked: params.LeakedValues,
+	}
+}
+
+// fakeConfigResolver returns a resolver that merely returns back the set of config values provided
+type fakeConfigResolver struct {
+	have   map[string]string
+	leaked []string
+}
+
+func (f fakeConfigResolver) Resolve(context.Context, string) (map[string]string, error) {
+	return f.have, nil
+}
+
+func (f fakeConfigResolver) LeakedSecrets(context.Context, string, []string) ([]string, error) {
+	return f.leaked, nil
 }

@@ -24,6 +24,8 @@ const maxConcurrentApps = 8
 
 // scanner reports an app's declared fields.
 type scanner interface {
+	// Fields pulls the fields out of a user's Config and reports metadata about them, such
+	// as what environments they're required in, and whether they're secret or not.
 	Fields(dir string) ([]scan.Field, error)
 }
 
@@ -74,6 +76,7 @@ type findings struct {
 // has a secret hardcoded in its non-secret config, or (with rejectUnreferenced)
 // is handed an unreferenced one.
 func (l *Linter) Lint(ctx context.Context, apps []string) error {
+
 	// Check every app concurrently; each app's resolver round-trips are
 	// independent. Lint reports all apps even when some fail, so goroutines never
 	// return an error (that would cancel the group); each app's result lands in
@@ -85,6 +88,7 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 	results := make([]result, len(apps))
 	g := new(errgroup.Group)
 	g.SetLimit(maxConcurrentApps)
+
 	for i, appPath := range apps {
 		g.Go(func() error {
 			found, err := l.checkApp(ctx, appPath)
@@ -119,6 +123,7 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 			fmt.Fprintf(os.Stderr, "ok    %s\n", app)
 		}
 	}
+
 	if failed > 0 {
 		return fmt.Errorf("%d app(s) failed lint", failed)
 	}
@@ -133,14 +138,20 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 // themselves are ignored, only the presence of each key matters.
 func (l *Linter) checkApp(ctx context.Context, appPath string) (findings, error) {
 	app := l.project.AppName(appPath)
+
 	fields, err := l.scanner.Fields(l.project.AppConfigDir(appPath))
 	if err != nil {
 		return findings{}, err
 	}
 
+	// TODO(@harrisoncramer): This logic and the logic in lint should be shared. Right now for instance the
+	// validate command is a superset of the checkApp -- it should do all this, plus the checks to actually load
+	// the application. Right now that's not the case. The validate command is for instance not running checks
+	// against leaked secrets.
+
 	var secretNames []string
 	for _, f := range fields {
-		if f.Secret {
+		if f.IsSecret {
 			secretNames = append(secretNames, f.Name)
 		}
 	}
@@ -164,7 +175,7 @@ func (l *Linter) checkApp(ctx context.Context, appPath string) (findings, error)
 			continue
 		}
 		provided := configVals
-		if f.Secret {
+		if f.IsSecret {
 			provided = secretVals
 		}
 		if _, ok := provided[f.Name]; !ok {

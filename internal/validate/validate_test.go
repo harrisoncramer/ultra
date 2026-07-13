@@ -13,43 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeScanner reports fixed fields for any dir.
-type fakeScanner struct{ fields []scan.Field }
-
-func (f fakeScanner) Fields(string) ([]scan.Field, error)     { return f.fields, nil }
-func (f fakeScanner) ConfigImportPath(string) (string, error) { return "example.com/x", nil }
-
-type mapResolver struct{ have map[string]string }
-
-func (m mapResolver) Resolve(context.Context, []string) (map[string]string, error) {
-	return m.have, nil
-}
-
-type configMapResolver struct{ have map[string]string }
-
-func (c configMapResolver) Resolve(context.Context, string) (map[string]string, error) {
-	return c.have, nil
-}
-
-// leakConfigResolver is a config resolver that also reports hardcoded secrets,
-// standing in for docker-compose's SecretLeakChecker capability.
-type leakConfigResolver struct {
-	have   map[string]string
-	leaked []string
-}
-
-func (c leakConfigResolver) Resolve(context.Context, string) (map[string]string, error) {
-	return c.have, nil
-}
-
-func (c leakConfigResolver) LeakedSecrets(context.Context, string, []string) ([]string, error) {
-	return c.leaked, nil
-}
-
-// flat declares only PLAIN (non-secret) and SECRET_TOKEN (secret).
 var flatFields = []scan.Field{
 	{Name: "PLAIN"},
-	{Name: "SECRET_TOKEN", Secret: true},
+	{Name: "SECRET_TOKEN", IsSecret: true},
 }
 
 type validateCase struct {
@@ -75,11 +41,15 @@ func TestValidateRejectsUnreferenced(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			v := NewValidator(NewValidatorParams{
-				Scanner:            fakeScanner{fields: flatFields},
+				Scanner:            scan.NewFakeConfigScanner(flatFields),
 				Project:            project.Project{},
 				RejectUnreferenced: true,
-				SecretResolver:     func(string) resolve.SecretResolver { return mapResolver{have: c.secretVals} },
-				ConfigResolver:     configMapResolver{have: c.configVals},
+				SecretResolver: func(string) resolve.SecretResolver {
+					return resolve.NewFakeSecretResolver(c.secretVals)
+				},
+				ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{
+					Values: c.configVals,
+				}),
 			})
 			err := v.validateApp(context.Background(), "flat")
 			if !c.wantErr {
@@ -107,10 +77,14 @@ func TestValidateRejectsHardcodedSecret(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			v := NewValidator(NewValidatorParams{
-				Scanner:        fakeScanner{fields: flatFields},
-				Project:        project.Project{},
-				SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
-				ConfigResolver: leakConfigResolver{leaked: c.leaked},
+				Scanner: scan.NewFakeConfigScanner(flatFields),
+				Project: project.Project{},
+				SecretResolver: func(string) resolve.SecretResolver {
+					return resolve.NewFakeSecretResolver(map[string]string{"SECRET_TOKEN": "x"})
+				},
+				ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{
+					LeakedValues: c.leaked,
+				}),
 			})
 			err := v.validateApp(context.Background(), "flat")
 			if !c.wantErr {
@@ -141,10 +115,12 @@ func TestValidateRefusesToClobberExistingDir(t *testing.T) {
 	v := NewValidator(NewValidatorParams{
 		// No secrets, so the store is never hit and validateApp reaches the dir
 		// check without a resolver.
-		Scanner:        fakeScanner{fields: []scan.Field{{Name: "PLAIN"}}},
-		Project:        project.Project{Root: root},
-		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{} },
-		ConfigResolver: configMapResolver{have: map[string]string{}},
+		Scanner: scan.NewFakeConfigScanner([]scan.Field{{Name: "PLAIN"}}),
+		Project: project.Project{Root: root},
+		SecretResolver: func(string) resolve.SecretResolver {
+			return resolve.NewFakeSecretResolver(map[string]string{}) // Empty resolver
+		},
+		ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{}),
 	})
 
 	err := v.validateApp(context.Background(), "app")

@@ -11,9 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
-	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 )
 
 // DefaultOutputName is the combined compose file gen writes when no name is
@@ -28,9 +28,10 @@ type configReader interface {
 	Read(apps []string) ([]configreader.AppOutput, error)
 }
 
-// composer renders the single names-only compose file covering every app.
+// composer renders the single combined compose override from the per-app secret
+// name blocks.
 type composer interface {
-	Override(apps []pkgcompose.AppSecrets) string
+	Override(apps []compose.AppSecrets) string
 }
 
 // Generator writes the combined compose file from apps' declared secret names.
@@ -101,12 +102,12 @@ func (g *Generator) Generate(apps []string) (Result, error) {
 		return Result{}, err
 	}
 
-	blocks := make([]pkgcompose.AppSecrets, 0, len(out))
+	blocks := make([]compose.AppSecrets, 0, len(out))
 	for _, o := range out {
 		if len(o.Names) == 0 {
 			continue
 		}
-		blocks = append(blocks, pkgcompose.AppSecrets{App: o.App, Names: o.Names})
+		blocks = append(blocks, compose.AppSecrets{App: o.App, Names: o.Names})
 	}
 
 	if len(blocks) == 0 {

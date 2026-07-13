@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/project"
-	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ func (f fakeScanner) SecretNames(string) ([]string, error) { return f.names, nil
 // "app=names" line per app block, in the order it was given them.
 type fakeComposer struct{}
 
-func (fakeComposer) Override(apps []pkgcompose.AppSecrets) string {
+func (fakeComposer) Override(apps []compose.AppSecrets) string {
 	var b strings.Builder
 	for _, a := range apps {
 		b.WriteString(a.App + "=" + strings.Join(a.Names, ",") + "\n")

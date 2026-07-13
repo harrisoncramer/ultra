@@ -1,5 +1,5 @@
 // Package validate is the validate domain: it reconstructs the environment each
-// app would boot with (its non-secret config plus its resolved secrets) and
+// app would boot with (its non-secret config plus its resolved scan) and
 // loads the app's Config against it to check it parses.
 package validate
 
@@ -115,13 +115,13 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 	}
 	var names []string
 	for _, f := range fields {
-		if f.Secret {
+		if f.IsSecret {
 			names = append(names, f.Name)
 		}
 	}
 
 	// The full env the app would see: process env, then the platform's non-secret
-	// config, then the resolved secrets (real names); later writes win.
+	// config, then the resolved scan (real names); later writes win.
 	env := os.Environ()
 
 	configVals, err := v.configResolver.Resolve(ctx, app)
@@ -132,7 +132,7 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 		env = append(env, k+"="+val)
 	}
 
-	// Only hit the secret store if the app actually declares secrets; an app with
+	// Only hit the secret store if the app actually declares scan; an app with
 	// none (e.g. no secret-tagged fields) has no vault item to fetch.
 	var secretVals map[string]string
 	if len(names) > 0 {
@@ -156,7 +156,7 @@ func (v *Validator) validateApp(ctx context.Context, appPath string) error {
 		}
 		if len(leaked) > 0 {
 			sort.Strings(leaked)
-			return fmt.Errorf("secrets hardcoded in non-secret config: %s", strings.Join(leaked, ", "))
+			return fmt.Errorf("scan hardcoded in non-secret config: %s", strings.Join(leaked, ", "))
 		}
 	}
 

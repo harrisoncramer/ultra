@@ -11,54 +11,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Tests for the AWS Secrets Manager resolver: how it names secrets
-// (<prefix>/<app>/<NAME>), maps fetched values back to their env-var names,
-// drops missing or empty ones, and splits requests into AWS's 20-per-call batch
-// limit. A fake client stands in for the SDK, so nothing here reaches AWS.
-
 type secretIDCase struct {
-	name    string
-	app     string
-	prefix  string
-	envName string
-	want    string
+	name       string
+	app        string
+	prefix     string
+	secretName string
+	want       string
 }
 
 func TestAWSSecretID(t *testing.T) {
 	cases := []secretIDCase{
-		{"no prefix", "worker", "", "GOOGLE_CLIENT_ID", "worker/GOOGLE_CLIENT_ID"},
-		{"with prefix", "worker", "prod", "DATABASE_URL", "prod/worker/DATABASE_URL"},
-		{"prefix slashes trimmed", "worker", "/prod/", "API_KEY", "prod/worker/API_KEY"},
+		{
+			name:       "no prefix",
+			app:        "worker",
+			prefix:     "",
+			secretName: "GOOGLE_CLIENT_ID",
+			want:       "worker/GOOGLE_CLIENT_ID",
+		},
+		{
+			name:       "with prefix",
+			app:        "worker",
+			prefix:     "prod",
+			secretName: "DATABASE_URL",
+			want:       "prod/worker/DATABASE_URL",
+		},
+		{
+			name:       "slashes trimmed on prefix",
+			app:        "worker",
+			prefix:     "/prod/",
+			secretName: "API_KEY",
+			want:       "prod/worker/API_KEY",
+		},
+		{
+			name:       "slashes trimmed on app",
+			app:        "/worker/",
+			prefix:     "prod",
+			secretName: "API_KEY",
+			want:       "prod/worker/API_KEY",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := awsSecretsManager{app: c.app, prefix: c.prefix}
-			assert.Equal(t, c.want, r.secretID(c.envName))
+			assert.Equal(t, c.want, r.secretID(c.secretName))
 		})
 	}
-}
-
-// fakeBatchGet records every id list it is asked for and returns a fixed set of
-// secret values, letting the resolver be tested without reaching AWS.
-type fakeBatchGet struct {
-	values map[string]string
-	calls  [][]string
-}
-
-func (f *fakeBatchGet) BatchGetSecretValue(_ context.Context, in *secretsmanager.BatchGetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.BatchGetSecretValueOutput, error) {
-	f.calls = append(f.calls, in.SecretIdList)
-	var out secretsmanager.BatchGetSecretValueOutput
-	for _, id := range in.SecretIdList {
-		val, ok := f.values[id]
-		if !ok {
-			continue
-		}
-		out.SecretValues = append(out.SecretValues, smtypes.SecretValueEntry{
-			Name:         awssdk.String(id),
-			SecretString: awssdk.String(val),
-		})
-	}
-	return &out, nil
 }
 
 // resolveCase is one Resolve scenario: what the fake store holds, the names the
@@ -113,11 +110,15 @@ func TestAWSResolve(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fake := &fakeBatchGet{values: c.storedByID}
+			fake := NewFakeBatchSecretGetter(NewFakeBatchSecretGetterParams{
+				Values: c.storedByID,
+			})
 			r := awsSecretsManager{
 				app:    c.app,
 				prefix: c.prefix,
-				newAPI: func(context.Context) (batchGetAPI, error) { return fake, nil },
+				newAPI: func(context.Context) (batchSecretGetter, error) {
+					return fake, nil
+				},
 			}
 
 			got, err := r.Resolve(context.Background(), c.requestNames)
@@ -130,4 +131,43 @@ func TestAWSResolve(t *testing.T) {
 			}
 		})
 	}
+}
+
+type NewFakeBatchSecretGetterParams struct {
+	Values map[string]string
+	Calls  [][]string
+}
+
+// NewFakeBatchSecretGetter returns a batch secret getter that returns a list of predefined values, and records
+// the id of each called for.
+func NewFakeBatchSecretGetter(params NewFakeBatchSecretGetterParams) *fakeBatchSecretGetter {
+	return &fakeBatchSecretGetter{
+		values: params.Values,
+		calls:  params.Calls,
+	}
+}
+
+// fakeBatchSecretGetter records every id list it is asked for and returns a fixed set of
+// secret values, letting the resolver be tested without reaching AWS.
+type fakeBatchSecretGetter struct {
+	values map[string]string
+	calls  [][]string
+}
+
+var _ batchSecretGetter = (*fakeBatchSecretGetter)(nil)
+
+func (f *fakeBatchSecretGetter) BatchGetSecretValue(_ context.Context, input *secretsmanager.BatchGetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.BatchGetSecretValueOutput, error) {
+	f.calls = append(f.calls, input.SecretIdList)
+	var out secretsmanager.BatchGetSecretValueOutput
+	for _, id := range input.SecretIdList {
+		val, ok := f.values[id]
+		if !ok {
+			continue
+		}
+		out.SecretValues = append(out.SecretValues, smtypes.SecretValueEntry{
+			Name:         awssdk.String(id),
+			SecretString: awssdk.String(val),
+		})
+	}
+	return &out, nil
 }

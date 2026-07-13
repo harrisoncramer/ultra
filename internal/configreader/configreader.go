@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/project"
-	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 )
 
 // scanner reports the secret env-var names an app's Config declares.
@@ -74,7 +74,7 @@ func (c *ConfigReader) Read(apps []string) ([]AppOutput, error) {
 		// names differ only by characters that normalize to the same segment (e.g.
 		// my-app and my_app both become MY_APP) map onto the same launcher
 		// variables and would silently cross-contaminate each other's secrets.
-		ns := pkgcompose.Namespace(app)
+		ns := compose.Namespace(app)
 		if prev, dup := seen[ns]; dup {
 			return nil, fmt.Errorf("apps %s and %s map to the same secret namespace %q: their secrets would collide, so rename one so the app names differ after normalization", prev, appPath, ns)
 		}
