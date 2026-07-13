@@ -103,7 +103,7 @@ jobs:
           restore-keys: |
             go-${{ runner.os }}-
 
-      - run: mise run integration
+      - run: mise run test-integration
 
   docs:
     runs-on: ubuntu-latest

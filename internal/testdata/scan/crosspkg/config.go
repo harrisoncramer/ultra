@@ -1,6 +1,6 @@
 package crosspkg
 
-import "github.com/harrisoncramer/ultra/pkg/testdata/scan/crosssub"
+import "github.com/harrisoncramer/ultra/internal/testdata/scan/crosssub"
 
 type Config struct {
 	crosssub.Extra

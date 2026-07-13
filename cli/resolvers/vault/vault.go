@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/harrisoncramer/ultra/cli"
+	"github.com/harrisoncramer/ultra/internal/xstring"
 
 	"github.com/spf13/pflag"
 )
@@ -41,10 +43,62 @@ func init() {
 			fs.StringVar(&address, "address", "", "Vault address (defaults to VAULT_ADDR)")
 			fs.StringVar(&namespace, "namespace", "", "Vault namespace (Enterprise; defaults to VAULT_NAMESPACE)")
 			return func(app string) cli.SecretResolver {
-				return vaultKV{app: app, mount: mount, address: address, namespace: namespace}
+
+				token, err := vaultToken()
+				if err != nil {
+					log.Fatalf("failed to get vault token: %v", err)
+				}
+
+				return NewVaultResolver(NewVaultResolverParams{
+					App:       app,
+					Mount:     mount,
+					Token:     token,
+					Address:   xstring.Coalesce(os.Getenv("VAULT_ADDR"), address),
+					Namespace: xstring.Coalesce(os.Getenv("VAULT_NAMESPACE"), namespace),
+				})
 			}
 		},
 	})
+}
+
+type NewVaultResolverParams struct {
+	App       string
+	Mount     string
+	Token     string
+	Address   string
+	Namespace string
+}
+
+func NewVaultResolver(params NewVaultResolverParams) vaultKV {
+	if params.Address == "" {
+		log.Fatalf("vault requires --address or VAULT_ADDR")
+	}
+
+	vaultSkipVerify, err := strconv.ParseBool(xstring.Coalesce("false", os.Getenv("VAULT_SKIP_VERIFY")))
+	if err != nil {
+		log.Fatalf("VAULT_SKIP_VERIFY was set to a non-boolean value: %v", err)
+	}
+
+	config, err := NewVaultTLSConfig(NewVaultTLSConfigParams{
+		vaultSkipVerify: vaultSkipVerify,
+		vaultServerName: os.Getenv("VAULT_TLS_SERVER_NAME"),
+		vaultCACert:     os.Getenv("VAULT_CACERT"),
+		vaultCAPath:     os.Getenv("VAULT_CAPATH"),
+		vaultClientCert: os.Getenv("VAULT_CLIENT_CERT"),
+		vaultClientKey:  os.Getenv("VAULT_CLIENT_KEY"),
+	})
+	if err != nil {
+		log.Fatalf("failed to load vault TLS config: %v", err)
+	}
+
+	return vaultKV{
+		app:       params.App,
+		mount:     params.Mount,
+		address:   params.Address,
+		namespace: params.Namespace,
+		token:     params.Token,
+		client:    vaultHTTPClient(config),
+	}
 }
 
 // vaultKV resolves secrets from HashiCorp Vault's KV v2 engine over the HTTP API,
@@ -56,6 +110,8 @@ type vaultKV struct {
 	mount     string
 	address   string
 	namespace string
+	token     string
+	client    *http.Client
 }
 
 // vaultResponse mirrors the KV v2 read endpoint: the actual key/value pairs are
@@ -73,36 +129,23 @@ type vaultResponse struct {
 // fatal; a missing address/token, or an unreachable/permission-denied Vault, is
 // fatal, and a missing individual key is simply omitted from the result.
 func (v vaultKV) Resolve(ctx context.Context, names []string) (map[string]string, error) {
-	addr := v.address
-	if addr == "" {
-		addr = os.Getenv("VAULT_ADDR")
-	}
-	if addr == "" {
-		return nil, fmt.Errorf("vault requires --address or VAULT_ADDR")
-	}
-	token, err := vaultToken()
-	if err != nil {
-		return nil, err
-	}
 
-	url := fmt.Sprintf("%s/v1/%s/data/%s", strings.TrimRight(addr, "/"), v.mount, v.app)
+	url := fmt.Sprintf("%s/v1/%s/data/%s", strings.TrimRight(v.address, "/"), v.mount, v.app)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building vault request: %w", err)
 	}
-	req.Header.Set("X-Vault-Token", token)
-	if ns := v.vaultNamespace(); ns != "" {
+
+	req.Header.Set("X-Vault-Token", v.token)
+	if ns := v.namespace; ns != "" {
 		req.Header.Set("X-Vault-Namespace", ns)
 	}
 
-	client, err := vaultHTTPClient()
-	if err != nil {
-		return nil, err
-	}
-	resp, err := client.Do(req)
+	resp, err := v.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s/%s from vault: %w", v.mount, v.app, err)
 	}
+
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
@@ -142,55 +185,64 @@ func vaultValueString(raw json.RawMessage) string {
 // vaultHTTPClient builds the HTTP client used for a read: a bounded timeout so a
 // hung server can't block forever, and a TLS config assembled from Vault's
 // standard environment so an internal CA or client certificate is honored.
-func vaultHTTPClient() (*http.Client, error) {
-	tlsCfg, err := vaultTLSConfig()
-	if err != nil {
-		return nil, err
-	}
+func vaultHTTPClient(config *tls.Config) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.TLSClientConfig = tlsCfg
-	return &http.Client{Timeout: vaultTimeout, Transport: tr}, nil
+	tr.TLSClientConfig = config
+	return &http.Client{Timeout: vaultTimeout, Transport: tr}
+}
+
+type NewVaultTLSConfigParams struct {
+	vaultServerName string
+	vaultSkipVerify bool
+	vaultCACert     string
+	vaultCAPath     string
+	vaultClientCert string
+	vaultClientKey  string
 }
 
 // vaultTLSConfig honors the same TLS environment the vault CLI reads:
 // VAULT_CACERT / VAULT_CAPATH for a private CA, VAULT_CLIENT_CERT / VAULT_CLIENT_KEY
 // for mutual TLS, VAULT_TLS_SERVER_NAME for SNI, and VAULT_SKIP_VERIFY to disable
 // verification. With none set it falls back to the system roots.
-func vaultTLSConfig() (*tls.Config, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+func NewVaultTLSConfig(params NewVaultTLSConfigParams) (*tls.Config, error) {
 
-	if sn := os.Getenv("VAULT_TLS_SERVER_NAME"); sn != "" {
-		cfg.ServerName = sn
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: params.vaultSkipVerify,
 	}
-	if skip, _ := strconv.ParseBool(os.Getenv("VAULT_SKIP_VERIFY")); skip {
-		cfg.InsecureSkipVerify = true
+
+	if sn := params.vaultServerName; sn != "" {
+		cfg.ServerName = sn
 	}
 
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
 	}
+
 	added := false
-	if f := os.Getenv("VAULT_CACERT"); f != "" {
-		pem, err := os.ReadFile(f)
+
+	if params.vaultCACert != "" {
+		pem, err := os.ReadFile(params.vaultCACert)
 		if err != nil {
-			return nil, fmt.Errorf("reading VAULT_CACERT: %w", err)
+			return nil, fmt.Errorf("reading vault CA cert: %w", err)
 		}
 		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("VAULT_CACERT %s: no valid certificates", f)
+			return nil, fmt.Errorf("VAULT_CACERT %s: no valid certificates", params.vaultCACert)
 		}
 		added = true
 	}
-	if dir := os.Getenv("VAULT_CAPATH"); dir != "" {
-		entries, err := os.ReadDir(dir)
+
+	if params.vaultCAPath != "" {
+		entries, err := os.ReadDir(params.vaultCAPath)
 		if err != nil {
-			return nil, fmt.Errorf("reading VAULT_CAPATH: %w", err)
+			return nil, fmt.Errorf("reading vault CA path: %w", err)
 		}
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
-			if pem, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil && pool.AppendCertsFromPEM(pem) {
+			if pem, err := os.ReadFile(filepath.Join(params.vaultCAPath, e.Name())); err == nil && pool.AppendCertsFromPEM(pem) {
 				added = true
 			}
 		}
@@ -199,22 +251,14 @@ func vaultTLSConfig() (*tls.Config, error) {
 		cfg.RootCAs = pool
 	}
 
-	cert, key := os.Getenv("VAULT_CLIENT_CERT"), os.Getenv("VAULT_CLIENT_KEY")
-	if cert != "" && key != "" {
-		pair, err := tls.LoadX509KeyPair(cert, key)
+	if params.vaultClientCert != "" && params.vaultClientKey != "" {
+		pair, err := tls.LoadX509KeyPair(params.vaultClientCert, params.vaultClientKey)
 		if err != nil {
-			return nil, fmt.Errorf("loading VAULT_CLIENT_CERT/VAULT_CLIENT_KEY: %w", err)
+			return nil, fmt.Errorf("loading vault client cert + client key: %w", err)
 		}
 		cfg.Certificates = []tls.Certificate{pair}
 	}
 	return cfg, nil
-}
-
-func (v vaultKV) vaultNamespace() string {
-	if v.namespace != "" {
-		return v.namespace
-	}
-	return os.Getenv("VAULT_NAMESPACE")
 }
 
 // vaultToken reads the token from VAULT_TOKEN, falling back to the ~/.vault-token

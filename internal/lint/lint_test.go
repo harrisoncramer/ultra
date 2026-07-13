@@ -11,50 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type fakeScanner struct{ fields []scan.Field }
-
-func (f fakeScanner) Fields(string) ([]scan.Field, error) { return f.fields, nil }
-
-type mapResolver struct{ have map[string]string }
-
-func (m mapResolver) Resolve(context.Context, []string) (map[string]string, error) {
-	return m.have, nil
-}
-
-type configMapResolver struct{ have map[string]string }
-
-func (c configMapResolver) Resolve(context.Context, string) (map[string]string, error) {
-	return c.have, nil
-}
-
-// leakyConfigResolver reports a fixed set of secret names as hardcoded in the
-// non-secret config, exercising lint's SecretLeakChecker path.
-type leakyConfigResolver struct {
-	configMapResolver
-	hardcoded map[string]bool
-}
-
-func (l leakyConfigResolver) LeakedSecrets(_ context.Context, _ string, names []string) ([]string, error) {
-	var out []string
-	for _, n := range names {
-		if l.hardcoded[n] {
-			out = append(out, n)
-		}
-	}
-	return out, nil
-}
-
-// flat declares SECRET_TOKEN (required secret) and PLAIN (optional non-secret).
+// flatFields is a set of Config values that are declared at a top-level -- one plain config value, one secret.
 var flatFields = []scan.Field{
 	{Name: "PLAIN"},
-	{Name: "SECRET_TOKEN", Secret: true, RequiredEnvs: []string{"*"}},
+	{Name: "SECRET_TOKEN", IsSecret: true, RequiredEnvs: []string{"*"}},
 }
 
-// scoped mirrors the testdata scoped fixture: required tags scoped per env.
+// scopedFields is a set of Config values that have specific scopes, like production or local
 var scopedFields = []scan.Field{
 	{Name: "ALWAYS", RequiredEnvs: []string{"*"}},
-	{Name: "API_KEY", Secret: true, RequiredEnvs: []string{"*"}},
-	{Name: "PROD_TOKEN", Secret: true, RequiredEnvs: []string{"production"}},
+	{Name: "API_KEY", IsSecret: true, RequiredEnvs: []string{"*"}},
+	{Name: "PROD_TOKEN", IsSecret: true, RequiredEnvs: []string{"production"}},
 	{Name: "OVERRIDE", RequiredEnvs: []string{"staging"}},
 	{Name: "LOCAL_URL", RequiredEnvs: []string{"local"}},
 	{Name: "OPTIONAL"},
@@ -62,13 +29,13 @@ var scopedFields = []scan.Field{
 
 type lintCase struct {
 	name               string
-	fields             []scan.Field
-	environment        string
-	rejectUnreferenced bool
-	secretVals         map[string]string
-	configVals         map[string]string
-	wantMissing        []string
-	wantExtra          []string
+	fields             []scan.Field      // The values read from the Config
+	environment        string            // The linter's environment variable
+	rejectUnreferenced bool              // Whether the reject unreferenced flag is set on the linter
+	secretVals         map[string]string // The values returned by the secret resolver.
+	configVals         map[string]string // The values returned by the config resolver.
+	wantMissing        []string          // The name of the values that should be found to be missing.
+	wantExtra          []string          // The names of the values that should be found to be extraneous, during reject unreferencd checks.
 }
 
 func TestLintApp(t *testing.T) {
@@ -79,78 +46,83 @@ func TestLintApp(t *testing.T) {
 			secretVals: map[string]string{"SECRET_TOKEN": "placeholder"},
 		},
 		{
-			name:        "flat reports the required secret the store lacks",
-			fields:      flatFields,
+			name:   "flat reports the required secret the store lacks",
+			fields: flatFields,
+			// secretVals: map[string]string{"SECRET_TOKEN": "placeholder"},
 			wantMissing: []string{"SECRET_TOKEN"},
 		},
 		{
-			name:       "unreferenced keys ignored when the flag is off",
+			name:       "unreferenced keys ignored when reject unreferenced flag is off",
 			fields:     flatFields,
-			secretVals: map[string]string{"SECRET_TOKEN": "x", "STRAY_SECRET": "y"},
-			configVals: map[string]string{"STRAY_CONFIG": "z"},
+			secretVals: map[string]string{"SECRET_TOKEN": "foo", "STRAY_SECRET": "bar"},
+			configVals: map[string]string{"STRAY_CONFIG": "baz"},
 		},
 		{
-			name:               "unreferenced keys reported when the flag is on",
+			name:               "unreferenced keys reported when the reject unreferenced flag is on",
 			fields:             flatFields,
 			rejectUnreferenced: true,
-			secretVals:         map[string]string{"SECRET_TOKEN": "x", "STRAY_SECRET": "y"},
-			configVals:         map[string]string{"PLAIN": "p", "STRAY_CONFIG": "z"},
+			secretVals:         map[string]string{"SECRET_TOKEN": "foo", "STRAY_SECRET": "bar"}, // STRAY_SECRET is not allowed
+			configVals:         map[string]string{"PLAIN": "p", "STRAY_CONFIG": "baz"},          // STRAY_CONFIG is not allowed
 			wantExtra:          []string{"STRAY_CONFIG", "STRAY_SECRET"},
 		},
 		{
 			name:        "production wants base plus prod-scoped secret",
 			fields:      scopedFields,
 			environment: "production",
-			secretVals:  map[string]string{"API_KEY": "x", "PROD_TOKEN": "y"},
-			configVals:  map[string]string{"ALWAYS": "z"},
+			secretVals:  map[string]string{"API_KEY": "foo", "PROD_TOKEN": "bar"},
+			configVals:  map[string]string{"ALWAYS": "baz"},
 		},
 		{
 			name:        "production missing the prod-scoped secret",
 			fields:      scopedFields,
 			environment: "production",
-			secretVals:  map[string]string{"API_KEY": "x"},
-			configVals:  map[string]string{"ALWAYS": "z"},
+			secretVals:  map[string]string{"API_KEY": "foo"},
+			configVals:  map[string]string{"ALWAYS": "baz"},
 			wantMissing: []string{"PROD_TOKEN"},
 		},
 		{
 			name:        "local wants the local-scoped config, not the prod secret",
 			fields:      scopedFields,
 			environment: "local",
-			secretVals:  map[string]string{"API_KEY": "x"},
-			configVals:  map[string]string{"ALWAYS": "z", "LOCAL_URL": "u"},
+			secretVals:  map[string]string{"API_KEY": "foo"},
+			configVals:  map[string]string{"ALWAYS": "baz", "LOCAL_URL": "u"},
 		},
 		{
 			name:        "local missing the local-scoped config",
 			fields:      scopedFields,
 			environment: "local",
-			secretVals:  map[string]string{"API_KEY": "x"},
-			configVals:  map[string]string{"ALWAYS": "z"},
+			secretVals:  map[string]string{"API_KEY": "foo"},
+			configVals:  map[string]string{"ALWAYS": "baz"},
 			wantMissing: []string{"LOCAL_URL"},
 		},
 		{
 			name:        "staging wants the overridden field only",
 			fields:      scopedFields,
 			environment: "staging",
-			secretVals:  map[string]string{"API_KEY": "x"},
-			configVals:  map[string]string{"ALWAYS": "z", "OVERRIDE": "o"},
+			secretVals:  map[string]string{"API_KEY": "foo"},
+			configVals:  map[string]string{"ALWAYS": "baz", "OVERRIDE": "o"},
 		},
 		{
 			name:        "unscoped required is enforced in every environment",
 			fields:      scopedFields,
 			environment: "production",
-			secretVals:  map[string]string{"API_KEY": "x", "PROD_TOKEN": "y"},
+			secretVals:  map[string]string{"API_KEY": "foo", "PROD_TOKEN": "bar"},
 			wantMissing: []string{"ALWAYS"},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			l := NewLinter(NewLinterParams{
-				Scanner:            fakeScanner{fields: c.fields},
+				Scanner:            scan.NewFakeConfigScanner(c.fields),
 				Project:            project.Project{},
 				Environment:        c.environment,
 				RejectUnreferenced: c.rejectUnreferenced,
-				SecretResolver:     func(string) resolve.SecretResolver { return mapResolver{have: c.secretVals} },
-				ConfigResolver:     configMapResolver{have: c.configVals},
+				SecretResolver: func(string) resolve.SecretResolver {
+					return resolve.NewFakeSecretResolver(c.secretVals)
+				},
+				ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{
+					Values: c.configVals,
+				}),
 			})
 			found, err := l.checkApp(context.Background(), "app")
 			require.NoError(t, err)
@@ -163,10 +135,15 @@ func TestLintApp(t *testing.T) {
 
 func TestLintFlagsHardcodedSecret(t *testing.T) {
 	l := NewLinter(NewLinterParams{
-		Scanner:        fakeScanner{fields: flatFields},
-		Project:        project.Project{},
-		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
-		ConfigResolver: leakyConfigResolver{hardcoded: map[string]bool{"SECRET_TOKEN": true}},
+		Scanner: scan.NewFakeConfigScanner(flatFields),
+		Project: project.Project{},
+		SecretResolver: func(string) resolve.SecretResolver {
+			return resolve.NewFakeSecretResolver(map[string]string{"SECRET_TOKEN": "foo"})
+		},
+		ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{
+			Values:       map[string]string{"SECRET_TOKEN": "foo"},
+			LeakedValues: []string{"SECRET_TOKEN"},
+		}),
 	})
 	found, err := l.checkApp(context.Background(), "app")
 	require.NoError(t, err)
@@ -176,10 +153,14 @@ func TestLintFlagsHardcodedSecret(t *testing.T) {
 
 func TestLintNoLeakWhenSecretOnlyInStore(t *testing.T) {
 	l := NewLinter(NewLinterParams{
-		Scanner:        fakeScanner{fields: flatFields},
-		Project:        project.Project{},
-		SecretResolver: func(string) resolve.SecretResolver { return mapResolver{have: map[string]string{"SECRET_TOKEN": "x"}} },
-		ConfigResolver: leakyConfigResolver{hardcoded: map[string]bool{}},
+		Scanner: scan.NewFakeConfigScanner(flatFields),
+		Project: project.Project{},
+		SecretResolver: func(string) resolve.SecretResolver {
+			return resolve.NewFakeSecretResolver(map[string]string{"SECRET_TOKEN": "foo"})
+		},
+		ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{
+			LeakedValues: []string{},
+		}),
 	})
 	found, err := l.checkApp(context.Background(), "app")
 	require.NoError(t, err)

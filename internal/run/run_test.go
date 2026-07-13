@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/configreader"
 	"github.com/harrisoncramer/ultra/internal/gen"
 	"github.com/harrisoncramer/ultra/internal/project"
 	"github.com/harrisoncramer/ultra/internal/resolve"
-	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -46,7 +46,7 @@ func (fakeComposer) Var(app, name string) string {
 	return "ULTRA_" + strings.ToUpper(app) + "__" + name
 }
 
-func (fakeComposer) Override(apps []pkgcompose.AppSecrets) string {
+func (fakeComposer) Override(apps []compose.AppSecrets) string {
 	var b strings.Builder
 	for _, a := range apps {
 		for _, n := range a.Names {

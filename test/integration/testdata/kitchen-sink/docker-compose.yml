@@ -12,4 +12,4 @@ services:
       CACHE_HOST: cache
       CACHE_PORT: 6380
       CACHE_TLS: true
-    command: ["sh", "-c", "true"]
+    command: ["sh", "-c", "echo ULTRASINK API_KEY=$$API_KEY PROD_SECRET=$$PROD_SECRET OTEL_KEY=$$OTEL_KEY"]

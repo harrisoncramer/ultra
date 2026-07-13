@@ -47,9 +47,9 @@ func init() {
 // BatchGetSecretValue call.
 const awsBatchLimit = 20
 
-// batchGetAPI is the subset of the Secrets Manager client ultra uses; the
+// batchSecretGetter is the subset of the Secrets Manager client ultra uses; the
 // resolver depends on it so tests can substitute a fake for the real SDK client.
-type batchGetAPI interface {
+type batchSecretGetter interface {
 	BatchGetSecretValue(ctx context.Context, in *secretsmanager.BatchGetSecretValueInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.BatchGetSecretValueOutput, error)
 }
 
@@ -64,12 +64,12 @@ type awsSecretsManager struct {
 	profile string
 	// newAPI builds the Secrets Manager client; overridable in tests. A nil value
 	// means load the real SDK client from the ambient credential chain.
-	newAPI func(ctx context.Context) (batchGetAPI, error)
+	newAPI func(ctx context.Context) (batchSecretGetter, error)
 }
 
 // client returns the Secrets Manager client to resolve against, building the
 // real SDK client from the region/profile flags unless a test has overridden it.
-func (a awsSecretsManager) client(ctx context.Context) (batchGetAPI, error) {
+func (a awsSecretsManager) client(ctx context.Context) (batchSecretGetter, error) {
 	if a.newAPI != nil {
 		return a.newAPI(ctx)
 	}
@@ -122,13 +122,17 @@ func (a awsSecretsManager) Resolve(ctx context.Context, names []string) (map[str
 	return out, nil
 }
 
-// secretID is the Secrets Manager name for a secret: <prefix>/<app>/<NAME> (the
-// prefix is optional).
+// secretID constructs the AWS Secrets Manager name for a secret: <prefix>/<app>/<NAME> (the prefix is optional).
 func (a awsSecretsManager) secretID(name string) string {
-	segs := make([]string, 0, 3)
-	if a.prefix != "" {
-		segs = append(segs, strings.Trim(a.prefix, "/"))
+	segments := make([]string, 0, 3)
+
+	// Trim leading and trailing slashes if provided
+	name = strings.Trim(name, "/")
+	app := strings.Trim(a.app, "/")
+	prefix := strings.Trim(a.prefix, "/")
+	if prefix != "" {
+		segments = append(segments, prefix)
 	}
-	segs = append(segs, a.app, name)
-	return strings.Join(segs, "/")
+	segments = append(segments, app, name) // Then add app + secret name, and join
+	return strings.Join(segments, "/")
 }

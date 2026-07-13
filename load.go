@@ -22,13 +22,13 @@ import (
 func Load[T any](cfg *T, opts ...Option) (*T, error) {
 	o := newLoadOptions(opts)
 
-	if bad := envTagRequiredFields(cfg); len(bad) > 0 {
+	if bad := hasDisallowedRequiredOrNotEmpty(cfg); len(bad) > 0 {
 		return nil, fmt.Errorf("failed to load config: %s declare required/notEmpty in the env tag; declare required-ness with the required tag instead (e.g. `required:\"*\"`)", strings.Join(bad, ", "))
 	}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	if missing := missingRequired(cfg, o.environment); len(missing) > 0 {
+	if missing := requiredButMissingValue(cfg, o.environment); len(missing) > 0 {
 		scope := ""
 		if o.environment != "" {
 			scope = fmt.Sprintf(" for environment %q", o.environment)

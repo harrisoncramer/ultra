@@ -20,7 +20,6 @@ import (
 	"github.com/harrisoncramer/ultra/internal/run"
 	"github.com/harrisoncramer/ultra/internal/scan"
 	"github.com/harrisoncramer/ultra/internal/validate"
-	pkgcompose "github.com/harrisoncramer/ultra/pkg/compose"
 
 	"github.com/spf13/cobra"
 )
@@ -283,7 +282,7 @@ func resolveApps(args []string, fc fileConfig) []string {
 func assertNoAppCollisions(apps []string, proj project.Project) error {
 	seen := make(map[string]string, len(apps))
 	for _, appPath := range apps {
-		ns := pkgcompose.Namespace(proj.AppName(appPath))
+		ns := compose.Namespace(proj.AppName(appPath))
 		if prev, dup := seen[ns]; dup {
 			return fmt.Errorf("apps %s and %s map to the same secret namespace %q: their secrets would collide, so rename one so the app names differ after normalization", prev, appPath, ns)
 		}
