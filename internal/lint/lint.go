@@ -80,8 +80,8 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 
 	for i, appPath := range apps {
 		g.Go(func() error {
-			found, err := l.checkApp(ctx, appPath)
-			results[i] = result{found: found, err: err}
+			r, err := l.checker.Check(ctx, appPath)
+			results[i] = result{found: r.Findings, err: err}
 			return nil
 		})
 	}
@@ -107,16 +107,4 @@ func (l *Linter) Lint(ctx context.Context, apps []string) error {
 		return fmt.Errorf("%d app(s) failed lint", failed)
 	}
 	return nil
-}
-
-// checkApp runs the shared static check for one app: the required keys no
-// resolver provides, the secrets hardcoded in the non-secret config, and, when
-// rejectUnreferenced is set, the keys a resolver provides that no Config field
-// references.
-func (l *Linter) checkApp(ctx context.Context, appPath string) (appcheck.Findings, error) {
-	r, err := l.checker.Check(ctx, appPath)
-	if err != nil {
-		return appcheck.Findings{}, err
-	}
-	return r.Findings, nil
 }
