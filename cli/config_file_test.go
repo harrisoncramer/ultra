@@ -106,6 +106,44 @@ vault = "Engineering"
 	}
 }
 
+func TestFlattenListValuedFlag(t *testing.T) {
+	fc := loadFrom(t, `
+compose-file = ["docker-compose.yml", "docker-compose.override.yml"]
+
+[secrets]
+resolver = "1password"
+`)
+	assert.Equal(t, []string{"docker-compose.yml", "docker-compose.override.yml"}, fc.listFlags["compose-file"])
+	// A TOML array is a list-valued flag, not a scalar, so it must not also land in
+	// flags as a stringified slice.
+	assert.NotContains(t, fc.flags, "compose-file")
+}
+
+func TestApplyConfigDefaultsListFlag(t *testing.T) {
+	fc := loadFrom(t, "compose-file = [\"docker-compose.yml\", \"docker-compose.override.yml\"]\n")
+	cmd := &cobra.Command{Use: "run"}
+	var composeFiles []string
+	cmd.Flags().StringArrayVar(&composeFiles, "compose-file", nil, "")
+
+	require.NoError(t, applyConfigDefaults(cmd, fc))
+	// Each array element sets the flag once, so a repeatable flag fills from the
+	// file exactly as passing it repeatedly on the command line would.
+	assert.Equal(t, []string{"docker-compose.yml", "docker-compose.override.yml"}, composeFiles)
+}
+
+func TestApplyConfigDefaultsListFlagCommandLineWins(t *testing.T) {
+	fc := loadFrom(t, "compose-file = [\"from-file.yml\"]\n")
+	cmd := &cobra.Command{Use: "run"}
+	var composeFiles []string
+	cmd.Flags().StringArrayVar(&composeFiles, "compose-file", nil, "")
+	require.NoError(t, cmd.Flags().Set("compose-file", "from-cli.yml"))
+
+	require.NoError(t, applyConfigDefaults(cmd, fc))
+	// The flag is already Changed from the command line, so the file must not
+	// append its values on top.
+	assert.Equal(t, []string{"from-cli.yml"}, composeFiles)
+}
+
 type applyDefaultsCase struct {
 	name   string
 	body   string

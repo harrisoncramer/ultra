@@ -33,6 +33,10 @@ import (
 //	# top-level keys map to the shared flags
 //	apps-dir = "services"             # --apps-dir
 //
+//	# a repeatable flag takes a TOML array, one element per occurrence, the same
+//	# as passing the flag more than once on the command line
+//	compose-file = ["docker-compose.yml", "docker-compose.override.yml"]
+//
 //	# optional override layers: any registered resolver, layered on top of the
 //	# base one, whose values win. Their flags live only here, never on the command
 //	# line, so a same-provider override doesn't collide with the base resolver.
@@ -45,14 +49,16 @@ import (
 //	resolver = "env"
 const configFileName = ".ultra.toml"
 
-// fileConfig holds the defaults read from .ultra.toml: flag values keyed by flag
-// name (for example "secret-resolver", "region"), plus the default list of app
-// paths to operate on when none are passed on the command line. Both are empty
-// when no file exists.
+// fileConfig holds the defaults read from .ultra.toml: scalar flag values keyed
+// by flag name (for example "secret-resolver", "region"), list-valued flags keyed
+// the same way (for example "compose-file", set from a TOML array), plus the
+// default list of app paths to operate on when none are passed on the command
+// line. All are empty when no file exists.
 type fileConfig struct {
-	flags    map[string]string
-	apps     []string
-	override overrideConfig
+	flags     map[string]string
+	listFlags map[string][]string
+	apps      []string
+	override  overrideConfig
 }
 
 // overrideConfig holds the optional resolvers layered on top of the base ones,
@@ -115,14 +121,26 @@ func loadConfig() (fileConfig, error) {
 // resolvers are ignored rather than colliding.
 func flatten(v *viper.Viper) fileConfig {
 	flags := map[string]string{}
+	listFlags := map[string][]string{}
 	for k, val := range v.AllSettings() {
 		if k == "apps" {
 			continue
 		}
-		if _, isSection := val.(map[string]any); isSection {
+		switch tv := val.(type) {
+		case map[string]any:
+			// A section ([secrets], [config], ...); handled below, not a scalar flag.
 			continue
+		case []any:
+			// A TOML array maps to a repeatable flag (e.g. compose-file), one flag
+			// value per element, mirroring passing the flag more than once.
+			list := make([]string, len(tv))
+			for i, e := range tv {
+				list[i] = fmt.Sprint(e)
+			}
+			listFlags[k] = list
+		default:
+			flags[k] = fmt.Sprint(val)
 		}
-		flags[k] = fmt.Sprint(val)
 	}
 	applySection(v, flags, "secrets", "secret-resolver")
 	applySection(v, flags, "config", "config-resolver")
@@ -131,7 +149,7 @@ func flatten(v *viper.Viper) fileConfig {
 	override.secretResolver = applyOverrideSection(v, override.secretFlags, "secrets-override")
 	override.configResolver = applyOverrideSection(v, override.configFlags, "config-override")
 
-	return fileConfig{flags: flags, apps: v.GetStringSlice("apps"), override: override}
+	return fileConfig{flags: flags, listFlags: listFlags, apps: v.GetStringSlice("apps"), override: override}
 }
 
 // applyOverrideSection records the override resolver a section selects and copies
@@ -197,6 +215,17 @@ func applyConfigDefaults(cmd *cobra.Command, fc fileConfig) error {
 	var err error
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		if err != nil || f.Changed {
+			return
+		}
+		// A list-valued flag is set once per element, so a repeatable flag (e.g.
+		// compose-file) fills from a TOML array the same as passing it repeatedly.
+		if vs, ok := fc.listFlags[f.Name]; ok {
+			for _, v := range vs {
+				if setErr := f.Value.Set(v); setErr != nil {
+					err = fmt.Errorf("%s from %s: %w", f.Name, configFileName, setErr)
+					return
+				}
+			}
 			return
 		}
 		if v, ok := fc.flags[f.Name]; ok {

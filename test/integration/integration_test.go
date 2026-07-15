@@ -24,6 +24,7 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("run injects resolved secrets into a container", r.runInjectsResolvedSecrets)
 	t.Run("run layers a local compose override over the base", r.runLayersComposeOverride)
+	t.Run("run layers compose files listed in the config file", r.runLayersComposeFilesFromConfigFile)
 	t.Run("run leaves an unresolved secret empty", r.runLeavesUnresolvedSecretEmpty)
 	t.Run("run namespaces a shared secret per app", r.runNamespacesSecretsPerApp)
 	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
@@ -117,6 +118,47 @@ func (r *Rig) runLayersComposeOverride(t *testing.T) {
 	// reaches the container even though a base override sits above the base file.
 	if !strings.Contains(res.output, "IT_API_KEY=run-secret-value") {
 		t.Errorf("resolved secret was lost when a compose override was layered\n%s", res.output)
+	}
+}
+
+func (r *Rig) runLayersComposeFilesFromConfigFile(t *testing.T) {
+	s := r.requireStore(t)
+	f := r.openFixture(t, "config-file")
+	t.Cleanup(func() { r.composeDown(f) })
+
+	if err := s.Seed("worker", map[string]string{"IT_API_KEY": "from-config-run"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The config file, not the command line, declares the layered compose files:
+	// the base plus an override, as a TOML array mirroring a repeated --compose-file.
+	// This proves the config file and the CLI flag stay in parity for a list flag.
+	writeFile(t, filepath.Join(f.root, ".ultra.toml"), `apps = ["apps/worker"]
+compose-file = ["docker-compose.yml", "docker-compose.override.yml"]
+`)
+	writeFile(t, filepath.Join(f.root, "docker-compose.override.yml"), `services:
+  worker:
+    environment:
+      LOG_LEVEL: from-config-override
+    command: ["sh", "-c", "echo ULTRASAW LOG_LEVEL=$$LOG_LEVEL IT_API_KEY=$$IT_API_KEY"]
+`)
+
+	// No app paths and no --compose-file on the command line: both come from the
+	// config file under --root.
+	args := append([]string{"run", "--root", f.root}, s.addrFlags()...)
+	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
+	res := r.ultra(t, args...)
+	if !res.ok() {
+		t.Fatalf("run failed:\n%s", res.output)
+	}
+
+	// The override listed second in the config file wins for the non-secret key.
+	if !strings.Contains(res.output, "LOG_LEVEL=from-config-override") {
+		t.Errorf("config-file compose override did not win over the base\n%s", res.output)
+	}
+	// The generated secrets override still applies on top of the layered files.
+	if !strings.Contains(res.output, "IT_API_KEY=from-config-run") {
+		t.Errorf("resolved secret was lost when compose files came from the config file\n%s", res.output)
 	}
 }
 
