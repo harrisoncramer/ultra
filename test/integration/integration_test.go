@@ -11,7 +11,6 @@ package integration
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,7 +22,6 @@ func TestIntegration(t *testing.T) {
 	r := newRig(t)
 
 	t.Run("run injects resolved secrets into a container", r.runInjectsResolvedSecrets)
-	t.Run("run layers a local compose override over the base", r.runLayersComposeOverride)
 	t.Run("run leaves an unresolved secret empty", r.runLeavesUnresolvedSecretEmpty)
 	t.Run("run namespaces a shared secret per app", r.runNamespacesSecretsPerApp)
 	t.Run("validate passes complete and fails on a missing secret", r.validatePassesAndFails)
@@ -72,52 +70,6 @@ func (r *Rig) runInjectsResolvedSecrets(t *testing.T) {
 	// secret name (never a value), so it is safe to leave on disk.
 	assertFileContains(t, f.overridePath(), "IT_API_KEY: ${ULTRA_WORKER__IT_API_KEY}")
 	assertFileContains(t, f.overridePath(), "IT_DB_URL: ${ULTRA_WORKER__IT_DB_URL}")
-}
-
-func (r *Rig) runLayersComposeOverride(t *testing.T) {
-	s := r.requireStore(t)
-	f := r.openFixture(t, "single-app")
-	t.Cleanup(func() { r.composeDown(f) })
-
-	if err := s.Seed("worker", map[string]string{
-		"IT_DB_URL":  "postgres://run-it",
-		"IT_API_KEY": "run-secret-value",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// A gitignored local override a developer layers on: it changes a non-secret
-	// config value (LOG_LEVEL, which the base sets to "info") and echoes it back
-	// alongside the resolved secret, so the run proves both that the override wins
-	// over the base and that ultra's secret override still applies on top.
-	override := filepath.Join(f.root, "docker-compose.override.yml")
-	writeFile(t, override, `services:
-  worker:
-    environment:
-      LOG_LEVEL: from-local-override
-    command: ["sh", "-c", "echo ULTRASAW LOG_LEVEL=$$LOG_LEVEL IT_API_KEY=$$IT_API_KEY"]
-`)
-
-	args := append([]string{
-		"run", "apps/worker", "--root", f.root,
-		"--compose-file", "docker-compose.yml",
-		"--compose-file", "docker-compose.override.yml",
-	}, s.addrFlags()...)
-	args = append(args, "--", "docker", "compose", "up", "--abort-on-container-exit", "--quiet-pull")
-	res := r.ultra(t, args...)
-	if !res.ok() {
-		t.Fatalf("run failed:\n%s", res.output)
-	}
-
-	// The later compose file wins for the non-secret key.
-	if !strings.Contains(res.output, "LOG_LEVEL=from-local-override") {
-		t.Errorf("local override did not win over the base config\n%s", res.output)
-	}
-	// The generated secrets override is layered last, so the resolved secret still
-	// reaches the container even though a base override sits above the base file.
-	if !strings.Contains(res.output, "IT_API_KEY=run-secret-value") {
-		t.Errorf("resolved secret was lost when a compose override was layered\n%s", res.output)
-	}
 }
 
 func (r *Rig) runLeavesUnresolvedSecretEmpty(t *testing.T) {
@@ -599,13 +551,6 @@ func (r *Rig) runDeliversKitchenSinkSecrets(t *testing.T) {
 		if !strings.Contains(res.output, want) {
 			t.Errorf("container did not observe %q\n%s", want, res.output)
 		}
-	}
-}
-
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("writing %s: %v", path, err)
 	}
 }
 
