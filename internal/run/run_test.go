@@ -20,6 +20,16 @@ import (
 // and composer, so tests exercise the actual override generation run performs on
 // every invocation.
 func newTestRunner(root, outputDir, composeFile string, names []string) *Runner {
+	var composeFiles []string
+	if composeFile != "" {
+		composeFiles = []string{composeFile}
+	}
+	return newTestRunnerFiles(root, outputDir, composeFiles, names)
+}
+
+// newTestRunnerFiles is newTestRunner with an explicit ordered list of base
+// compose files, so tests can assert the layered COMPOSE_FILE ordering.
+func newTestRunnerFiles(root, outputDir string, composeFiles, names []string) *Runner {
 	proj := project.Project{Root: root, ConfigDir: "config"}
 	return NewRunner(NewRunnerParams{
 		Generator: gen.NewGenerator(gen.NewGeneratorParams{
@@ -28,9 +38,9 @@ func newTestRunner(root, outputDir, composeFile string, names []string) *Runner 
 			Project:   proj,
 			OutputDir: outputDir,
 		}),
-		Composer:    fakeComposer{},
-		Project:     proj,
-		ComposeFile: composeFile,
+		Composer:     fakeComposer{},
+		Project:      proj,
+		ComposeFiles: composeFiles,
 	})
 }
 
@@ -173,6 +183,30 @@ func TestPrepareUsesConfiguredComposeFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, prep.composeFiles)
 	assert.Equal(t, filepath.Join(root, "docker-compose.lake.yml"), prep.composeFiles[0])
+}
+
+func TestPrepareLayersComposeFilesInOrder(t *testing.T) {
+	root := t.TempDir()
+	runner := newTestRunnerFiles(
+		root,
+		"",
+		[]string{"docker-compose.yml", "docker-compose.override.yml"},
+		[]string{"RESOLVED"},
+	)
+	prep, err := runner.prepare(context.Background(), Params{
+		Apps:        []string{"app"},
+		ResolverFor: resolverFor(map[string]string{"RESOLVED": "value"}),
+	})
+	require.NoError(t, err)
+
+	// Each base file in the order given, then the generated secrets override last
+	// so a resolved secret is never shadowed by a later base file.
+	want := []string{
+		filepath.Join(root, "docker-compose.yml"),
+		filepath.Join(root, "docker-compose.override.yml"),
+		filepath.Join(root, "tmp", "ultra.compose.yml"),
+	}
+	assert.Equal(t, want, prep.composeFiles)
 }
 
 func TestRunRegeneratesOverride(t *testing.T) {

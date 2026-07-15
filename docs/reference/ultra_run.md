@@ -11,6 +11,11 @@ COMPOSE_FILE at it, so docker interpolates the resolved secrets into your
 containers. The override is derived from the code each time, so it is always
 current; no secret value is written to disk.
 
+Pass --compose-file more than once to layer compose files, like docker's own -f:
+they are set on COMPOSE_FILE in order, so a later file (e.g. a gitignored local
+override) wins over an earlier one, while the generated secrets override still
+applies on top.
+
 ```
 ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...
 ```
@@ -18,12 +23,12 @@ ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...
 ### Options
 
 ```
-      --compose-file string      base docker compose file COMPOSE_FILE points at, relative to --root (default "docker-compose.yml")
-      --config-dir string        config package directory under each app path (e.g. pkg/config) (default "config")
-      --config-file string       path to the ultra config file (default .ultra.toml under --root)
-  -h, --help                     help for run
-      --root string              repo root the compose file and overrides are anchored to (default ".")
-      --secret-resolver string   secret backend: 1password, vault, aws-secret-manager
+      --compose-file stringArray   docker compose file COMPOSE_FILE points at, relative to --root; repeatable, later files win (default "docker-compose.yml")
+      --config-dir string          config package directory under each app path (e.g. pkg/config) (default "config")
+      --config-file string         path to the ultra config file (default .ultra.toml under --root)
+  -h, --help                       help for run
+      --root string                repo root the compose file and overrides are anchored to (default ".")
+      --secret-resolver string     secret backend: 1password, vault, aws-secret-manager
 ```
 
 ### SEE ALSO
