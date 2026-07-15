@@ -69,7 +69,8 @@ func newRootCmd(fc fileConfig) *cobra.Command {
 
 func newRunCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
-	var secretResolver, composeFile string
+	var secretResolver string
+	var composeFiles []string
 
 	cmd := &cobra.Command{
 		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
@@ -79,12 +80,17 @@ your command with them set. On every run it regenerates a names-only docker
 compose override from each app's Config into a temporary directory and points
 COMPOSE_FILE at it, so docker interpolates the resolved secrets into your
 containers. The override is derived from the code each time, so it is always
-current; no secret value is written to disk.`,
+current; no secret value is written to disk.
+
+Pass --compose-file more than once to layer compose files, like docker's own -f:
+they are set on COMPOSE_FILE in order, so a later file (e.g. a gitignored local
+override) wins over an earlier one, while the generated secrets override still
+applies on top.`,
 		Args: cobra.ArbitraryArgs,
 	}
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+resolve.SecretResolverNames())
-	cmd.Flags().StringVar(&composeFile, "compose-file", "docker-compose.yml", "base docker compose file COMPOSE_FILE points at, relative to --root")
+	cmd.Flags().StringArrayVar(&composeFiles, "compose-file", nil, "docker compose file COMPOSE_FILE points at, relative to --root; repeatable, later files win (default \"docker-compose.yml\")")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -113,9 +119,9 @@ current; no secret value is written to disk.`,
 				Composer: compose.NewComposer(),
 				Project:  shared.project(),
 			}),
-			Composer:    compose.NewComposer(),
-			Project:     shared.project(),
-			ComposeFile: composeFile,
+			Composer:     compose.NewComposer(),
+			Project:      shared.project(),
+			ComposeFiles: composeFiles,
 		})
 		return runner.Run(cmd.Context(), run.Params{
 			Apps:        apps,
