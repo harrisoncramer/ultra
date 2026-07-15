@@ -40,31 +40,34 @@ type composer interface {
 // Runner generates apps' overrides, resolves their secrets, and launches
 // commands against them.
 type Runner struct {
-	generator   generator
-	composer    composer
-	project     project.Project
-	composeFile string
+	generator    generator
+	composer     composer
+	project      project.Project
+	composeFiles []string
 }
 
 // NewRunnerParams are the dependencies and layout NewRunner needs.
 type NewRunnerParams struct {
-	Generator   generator
-	Composer    composer
-	Project     project.Project
-	ComposeFile string // base compose file COMPOSE_FILE points at; empty means "docker-compose.yml"
+	Generator generator
+	Composer  composer
+	Project   project.Project
+	// ComposeFiles are the base compose files COMPOSE_FILE points at, in order, so
+	// a later file (e.g. a local override) wins over an earlier one; the generated
+	// secrets override is always layered last. Empty means "docker-compose.yml".
+	ComposeFiles []string
 }
 
 // NewRunner builds a Runner, defaulting the compose file.
 func NewRunner(params NewRunnerParams) *Runner {
-	composeFile := params.ComposeFile
-	if composeFile == "" {
-		composeFile = "docker-compose.yml"
+	composeFiles := params.ComposeFiles
+	if len(composeFiles) == 0 {
+		composeFiles = []string{"docker-compose.yml"}
 	}
 	return &Runner{
-		generator:   params.Generator,
-		composer:    params.Composer,
-		project:     params.Project,
-		composeFile: composeFile,
+		generator:    params.Generator,
+		composer:     params.Composer,
+		project:      params.Project,
+		composeFiles: composeFiles,
 	}
 }
 
@@ -149,7 +152,14 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	}
 
 	env := os.Environ()
-	composeFiles := []string{filepath.Join(r.project.Root, r.composeFile)}
+	// COMPOSE_FILE lists the base files in order, then the generated secrets
+	// override last. docker merges left to right, so a later base file (a local
+	// override a developer layers on) wins over an earlier one, while the secrets
+	// override still applies on top since it maps distinct launcher variables.
+	composeFiles := make([]string, 0, len(r.composeFiles)+1)
+	for _, f := range r.composeFiles {
+		composeFiles = append(composeFiles, filepath.Join(r.project.Root, f))
+	}
 	if result.Path != "" {
 		composeFiles = append(composeFiles, result.Path)
 	}
@@ -165,13 +175,26 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 }
 
 // scopeToComposeServices drops any app whose name isn't a service in the base
-// compose file, warning for each, so its override block can't turn the merged
-// project into one docker rejects. It returns the apps unchanged when the base
-// compose can't be read (it may be absent, or the command may not be docker), so
-// this only ever removes an app that would otherwise have broken the run.
+// compose files, warning for each, so its override block can't turn the merged
+// project into one docker rejects. Service names are unioned across every base
+// file, since a later file may add a service the first doesn't. It returns the
+// apps unchanged when no base file can be read (they may be absent, or the
+// command may not be docker), so this only ever removes an app that would
+// otherwise have broken the run.
 func (r *Runner) scopeToComposeServices(apps []string) []string {
-	services, err := compose.ServiceNames(filepath.Join(r.project.Root, r.composeFile))
-	if err != nil {
+	services := map[string]bool{}
+	readAny := false
+	for _, f := range r.composeFiles {
+		names, err := compose.ServiceNames(filepath.Join(r.project.Root, f))
+		if err != nil {
+			continue
+		}
+		readAny = true
+		for name := range names {
+			services[name] = true
+		}
+	}
+	if !readAny {
 		return apps
 	}
 	kept := make([]string, 0, len(apps))
@@ -181,7 +204,7 @@ func (r *Runner) scopeToComposeServices(apps []string) []string {
 			kept = append(kept, appPath)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "ultra: %s has no service %q in %s, skipping it; its secrets won't be injected\n", appPath, name, r.composeFile)
+		fmt.Fprintf(os.Stderr, "ultra: %s has no service %q in the compose files, skipping it; its secrets won't be injected\n", appPath, name)
 	}
 	return kept
 }
