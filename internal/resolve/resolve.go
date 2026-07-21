@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spf13/pflag"
+	"golang.org/x/sync/errgroup"
 )
 
 // ErrSecretNotFound signals that a store has no entry for an app at all, as
@@ -86,23 +87,48 @@ type layeredSecretResolver struct {
 	override SecretResolver
 }
 
-// Resolve returns the base values with the override's merged on top.
+// Resolve queries the base and override stores concurrently and returns the base
+// values with the override's merged on top. The two are independent round-trips,
+// so overlapping them halves the per-app latency when both back onto a slow store
+// (e.g. two 1Password vaults). A base failure is fatal; an override reporting
+// ErrSecretNotFound means it doesn't cover this app, so it falls through to the
+// base rather than cancelling it.
 func (l layeredSecretResolver) Resolve(ctx context.Context, names []string) (map[string]string, error) {
-	out, err := l.base.Resolve(ctx, names)
-	if err != nil {
+	if l.override == nil {
+		return l.base.Resolve(ctx, names)
+	}
+
+	var baseVals, overrideVals map[string]string
+	g, ctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		v, err := l.base.Resolve(ctx, names)
+		if err != nil {
+			return err
+		}
+		baseVals = v
+		return nil
+	})
+	g.Go(func() error {
+		v, err := l.override.Resolve(ctx, names)
+		if err != nil {
+			// The override not covering this app is expected; swallow it here so it
+			// neither fails the group nor cancels the base query still in flight.
+			if errors.Is(err, ErrSecretNotFound) {
+				return nil
+			}
+			return fmt.Errorf("secret override resolver: %w", err)
+		}
+		overrideVals = v
+		return nil
+	})
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	if l.override == nil {
-		return out, nil
+
+	if overrideVals == nil {
+		return baseVals, nil
 	}
-	ov, err := l.override.Resolve(ctx, names)
-	if err != nil {
-		if errors.Is(err, ErrSecretNotFound) {
-			return out, nil
-		}
-		return nil, fmt.Errorf("secret override resolver: %w", err)
-	}
-	return mergeOver(out, ov), nil
+	return mergeOver(baseVals, overrideVals), nil
 }
 
 // mergeOver returns a new map of base with override's entries layered on top so

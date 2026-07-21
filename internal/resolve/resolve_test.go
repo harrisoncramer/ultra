@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -163,6 +164,51 @@ func TestLayeredSecretResolverBaseNotFoundIsFatal(t *testing.T) {
 	_, err := l.Resolve(context.Background(), []string{"A"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSecretNotFound)
+}
+
+// blockingResolver signals when its Resolve is entered and blocks until released,
+// so a test can prove two resolvers run at the same time.
+type blockingResolver struct {
+	entered chan struct{}
+	release chan struct{}
+	have    map[string]string
+}
+
+func (b blockingResolver) Resolve(context.Context, []string) (map[string]string, error) {
+	close(b.entered)
+	<-b.release
+	return b.have, nil
+}
+
+// The base and override stores are queried concurrently: both are inside Resolve
+// at the same time before either returns, rather than one waiting on the other.
+func TestLayeredSecretResolverQueriesConcurrently(t *testing.T) {
+	base := blockingResolver{entered: make(chan struct{}), release: make(chan struct{}), have: map[string]string{"A": "base"}}
+	override := blockingResolver{entered: make(chan struct{}), release: make(chan struct{}), have: map[string]string{"B": "override"}}
+	l := layeredSecretResolver{base: base, override: override}
+
+	done := make(chan map[string]string, 1)
+	go func() {
+		got, err := l.Resolve(context.Background(), []string{"A", "B"})
+		require.NoError(t, err)
+		done <- got
+	}()
+
+	// Neither goroutine can finish until released, so both entering proves overlap.
+	select {
+	case <-base.entered:
+	case <-time.After(time.Second):
+		t.Fatal("base resolver never started")
+	}
+	select {
+	case <-override.entered:
+	case <-time.After(time.Second):
+		t.Fatal("override resolver did not start while base was blocked")
+	}
+	close(base.release)
+	close(override.release)
+
+	assert.Equal(t, map[string]string{"A": "base", "B": "override"}, <-done)
 }
 
 func TestLayeredSecretResolverNilOverrideIsBase(t *testing.T) {
