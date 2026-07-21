@@ -14,11 +14,38 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// opMu serializes `op` invocations. Callers resolve apps concurrently, but the op
-// CLI unlocks via a biometric prompt per invocation until its desktop-app session
-// is cached; firing many at once triggers a prompt storm. Running them one at a
-// time lets the first prompt cache the session so the rest reuse it silently.
-var opMu sync.Mutex
+// opWarm gates the first `op` invocation so it runs alone. Callers resolve apps
+// concurrently, but the op CLI unlocks via a biometric prompt per invocation
+// until its desktop-app session is cached; firing many at once against a cold
+// session triggers a prompt storm. Serializing until the first call succeeds lets
+// that one prompt cache the session, after which the rest run concurrently and
+// reuse it silently. Only the very first call pays the serial cost.
+var opWarm warmGate
+
+// warmGate serializes callers until the first op invocation succeeds, then lets
+// every later caller run concurrently.
+type warmGate struct {
+	mu     sync.Mutex
+	warmed bool
+}
+
+// run executes exec under the warm gate: once the session is warm it runs
+// straight through, otherwise it holds the lock across the call so a cold session
+// only ever prompts once, marking the gate warm on the first success so queued
+// callers drain into concurrent mode.
+func (g *warmGate) run(exec func() error) error {
+	g.mu.Lock()
+	if g.warmed {
+		g.mu.Unlock()
+		return exec()
+	}
+	defer g.mu.Unlock()
+	err := exec()
+	if err == nil {
+		g.warmed = true
+	}
+	return err
+}
 
 func init() {
 	cli.RegisterSecretResolver(cli.SecretResolverCommand{
@@ -66,9 +93,7 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	opMu.Lock()
-	err := cmd.Run()
-	opMu.Unlock()
+	err := opWarm.run(cmd.Run)
 
 	return o.pick(opResult{err: err, stdout: stdout.Bytes(), stderr: stderr.String()}, names)
 }
