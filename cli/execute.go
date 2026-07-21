@@ -71,6 +71,7 @@ func newRunCmd(fc fileConfig) *cobra.Command {
 	shared := &sharedFlags{}
 	var secretResolver string
 	var composeFiles []string
+	var concurrency int
 
 	cmd := &cobra.Command{
 		Use:   "run [app-path...] --secret-resolver <name> [flags] -- <command>...",
@@ -91,6 +92,7 @@ applies on top.`,
 	addSharedFlags(cmd, shared)
 	cmd.Flags().StringVar(&secretResolver, "secret-resolver", "", "secret backend: "+resolve.SecretResolverNames())
 	cmd.Flags().StringArrayVar(&composeFiles, "compose-file", nil, "docker compose file COMPOSE_FILE points at, relative to --root; repeatable, later files win (default \"docker-compose.yml\")")
+	cmd.Flags().IntVar(&concurrency, "concurrency", run.DefaultConcurrency, "how many apps resolve their secrets at once")
 	resolverFor := bindSelectedSecretResolver(cmd, fc)
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -122,6 +124,7 @@ applies on top.`,
 			Composer:     compose.NewComposer(),
 			Project:      shared.project(),
 			ComposeFiles: composeFiles,
+			Concurrency:  concurrency,
 		})
 		return runner.Run(cmd.Context(), run.Params{
 			Apps:        apps,

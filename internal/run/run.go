@@ -21,10 +21,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// maxConcurrentApps bounds how many apps resolve at once, so a project with many
-// apps doesn't spawn an unbounded number of resolver subprocesses (op, docker)
-// simultaneously.
-const maxConcurrentApps = 8
+// DefaultConcurrency bounds how many apps resolve at once when the caller does
+// not set one, so a project with many apps doesn't spawn an unbounded number of
+// resolver subprocesses (op, docker) simultaneously. It comfortably covers a
+// typical project's app count so every app resolves in one wave; --concurrency
+// tunes it per invocation.
+const DefaultConcurrency = 16
 
 // generator writes the combined compose override and reports the secret names
 // each app declares, independent of the secret store.
@@ -44,6 +46,7 @@ type Runner struct {
 	composer     composer
 	project      project.Project
 	composeFiles []string
+	concurrency  int
 }
 
 // NewRunnerParams are the dependencies and layout NewRunner needs.
@@ -55,19 +58,27 @@ type NewRunnerParams struct {
 	// a later file (e.g. a local override) wins over an earlier one; the generated
 	// secrets override is always layered last. Empty means "docker-compose.yml".
 	ComposeFiles []string
+	// Concurrency bounds how many apps resolve their secrets at once. Zero or
+	// negative means DefaultConcurrency.
+	Concurrency int
 }
 
-// NewRunner builds a Runner, defaulting the compose file.
+// NewRunner builds a Runner, defaulting the compose file and concurrency.
 func NewRunner(params NewRunnerParams) *Runner {
 	composeFiles := params.ComposeFiles
 	if len(composeFiles) == 0 {
 		composeFiles = []string{"docker-compose.yml"}
+	}
+	concurrency := params.Concurrency
+	if concurrency <= 0 {
+		concurrency = DefaultConcurrency
 	}
 	return &Runner{
 		generator:    params.Generator,
 		composer:     params.Composer,
 		project:      params.Project,
 		composeFiles: composeFiles,
+		concurrency:  concurrency,
 	}
 }
 
@@ -121,7 +132,7 @@ func (r *Runner) prepare(ctx context.Context, params Params) (*prepared, error) 
 	results := make([]appResult, len(overrides))
 
 	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrentApps)
+	g.SetLimit(r.concurrency)
 	for i, o := range overrides {
 		if len(o.Names) == 0 {
 			continue

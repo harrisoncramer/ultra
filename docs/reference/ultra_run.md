@@ -24,6 +24,7 @@ ultra run [app-path...] --secret-resolver <name> [flags] -- <command>...
 
 ```
       --compose-file stringArray   docker compose file COMPOSE_FILE points at, relative to --root; repeatable, later files win (default "docker-compose.yml")
+      --concurrency int            how many apps resolve their secrets at once (default 16)
       --config-dir string          config package directory under each app path (e.g. pkg/config) (default "config")
       --config-file string         path to the ultra config file (default .ultra.toml under --root)
   -h, --help                       help for run

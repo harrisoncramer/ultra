@@ -2,10 +2,13 @@ package run
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/harrisoncramer/ultra/internal/compose"
 	"github.com/harrisoncramer/ultra/internal/configreader"
@@ -231,4 +234,74 @@ func TestRunRejectsEmptyCommand(t *testing.T) {
 	})
 	require.Error(t, err, "an empty command must error, not panic on Command[0]")
 	assert.Contains(t, err.Error(), "no command to run")
+}
+
+// NewRunner falls back to DefaultConcurrency when the caller leaves it unset or
+// passes a non-positive value, and keeps a positive one.
+func TestNewRunnerConcurrencyDefault(t *testing.T) {
+	proj := project.Project{Root: t.TempDir(), ConfigDir: "config"}
+	base := NewRunnerParams{Composer: fakeComposer{}, Project: proj}
+
+	assert.Equal(t, DefaultConcurrency, NewRunner(base).concurrency)
+
+	base.Concurrency = -1
+	assert.Equal(t, DefaultConcurrency, NewRunner(base).concurrency)
+
+	base.Concurrency = 4
+	assert.Equal(t, 4, NewRunner(base).concurrency)
+}
+
+// concurrencyProbe records the peak number of resolvers running at once.
+type concurrencyProbe struct {
+	mu       *sync.Mutex
+	inFlight *int
+	peak     *int
+}
+
+func (p concurrencyProbe) Resolve(context.Context, []string) (map[string]string, error) {
+	p.mu.Lock()
+	*p.inFlight++
+	if *p.inFlight > *p.peak {
+		*p.peak = *p.inFlight
+	}
+	p.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	p.mu.Lock()
+	*p.inFlight--
+	p.mu.Unlock()
+	return nil, nil
+}
+
+// prepare never runs more resolvers at once than the configured concurrency,
+// while still running several concurrently.
+func TestPrepareRespectsConcurrency(t *testing.T) {
+	root := t.TempDir()
+	proj := project.Project{Root: root, ConfigDir: "config"}
+	const limit = 3
+	runner := NewRunner(NewRunnerParams{
+		Generator: gen.NewGenerator(gen.NewGeneratorParams{
+			Reader:   configreader.NewConfigReader(configreader.NewConfigReaderParams{Scanner: fakeScanner{names: []string{"SECRET"}}, Project: proj}),
+			Composer: fakeComposer{},
+			Project:  proj,
+		}),
+		Composer:    fakeComposer{},
+		Project:     proj,
+		Concurrency: limit,
+	})
+
+	var mu sync.Mutex
+	var inFlight, peak int
+	apps := make([]string, 12)
+	for i := range apps {
+		apps[i] = fmt.Sprintf("app%d", i)
+	}
+	_, err := runner.prepare(context.Background(), Params{
+		Apps: apps,
+		ResolverFor: func(string) resolve.SecretResolver {
+			return concurrencyProbe{mu: &mu, inFlight: &inFlight, peak: &peak}
+		},
+	})
+	require.NoError(t, err)
+	assert.LessOrEqual(t, peak, limit, "ran more resolvers at once than the limit")
+	assert.Greater(t, peak, 1, "resolvers should run concurrently")
 }
