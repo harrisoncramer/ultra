@@ -340,3 +340,71 @@ func TestFieldsMatchesEnvGetFieldParams(t *testing.T) {
 		})
 	}
 }
+
+// preparedFixtures are the fixtures Prepare is asked for as a batch. They span a
+// flat config, a composed one, one whose sub-struct lives in another package, and
+// one whose fields are unexported, so the batched load has to resolve the same
+// range of shapes the per-directory load does.
+var preparedFixtures = []string{"flat", "composed", "crosspkg", "prefixed", "scoped", "unexported"}
+
+func TestPrepareAgreesWithPerDirectoryLoading(t *testing.T) {
+	dirs := make([]string, 0, len(preparedFixtures))
+	for _, f := range preparedFixtures {
+		dirs = append(dirs, fixtureDir(f))
+	}
+
+	prepared := NewScanner()
+	prepared.Prepare(dirs)
+
+	perDir := NewScanner()
+	for _, dir := range dirs {
+		t.Run(dir, func(t *testing.T) {
+			want, err := perDir.Fields(dir)
+			require.NoError(t, err)
+			got, err := prepared.Fields(dir)
+			require.NoError(t, err)
+			assert.Equal(t, want, got, "a batched load must report the same fields as loading the package alone")
+		})
+	}
+}
+
+func TestPrepareReportsAPackageProblemAgainstItsOwnDirectory(t *testing.T) {
+	// dupsecret type-checks fine and fails only when its fields are walked, so it
+	// is served from the batch cache and still has to name itself in the error.
+	dup := fixtureDir("dupsecret")
+
+	s := NewScanner()
+	s.Prepare([]string{fixtureDir("flat"), dup})
+
+	_, err := s.Fields(dup)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dupsecret")
+}
+
+func TestPrepareLeavesUnresolvablePackagesToFields(t *testing.T) {
+	// A package with no Config and a directory that isn't there are both dropped
+	// from the batch rather than failing it, so the apps alongside them keep the
+	// shared load and each bad one still reports its own error.
+	good := fixtureDir("flat")
+	cases := []struct {
+		name    string
+		dir     string
+		wantErr string
+	}{
+		{"package without a Config", fixtureDir("noconfig"), "no exported Config struct"},
+		{"directory that does not exist", fixtureDir("nope"), "loading config package"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := NewScanner()
+			s.Prepare([]string{good, c.dir})
+
+			_, err := s.Fields(good)
+			require.NoError(t, err, "a bad sibling must not cost the good package its cached load")
+
+			_, err = s.Fields(c.dir)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.wantErr)
+		})
+	}
+}

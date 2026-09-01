@@ -45,3 +45,28 @@ func TestLintErrorsAndCountsFailingApps(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "2 app(s) failed lint")
 }
+
+// recordingScanner is a scanner that also implements preparer, so a test can see
+// which config directories Lint hands over for the batched type-check.
+type recordingScanner struct {
+	*scan.FakeConfigScanner
+	prepared []string
+}
+
+func (r *recordingScanner) Prepare(dirs []string) { r.prepared = dirs }
+
+func TestLintPreparesEveryAppsConfigDirUpFront(t *testing.T) {
+	s := &recordingScanner{FakeConfigScanner: scan.NewFakeConfigScanner(flatFields)}
+	p := project.Project{Root: "repo", ConfigDir: "pkg/config"}
+	l := NewLinter(NewLinterParams{
+		Scanner: s,
+		Project: p,
+		SecretResolver: func(string) resolve.SecretResolver {
+			return resolve.NewFakeSecretResolver(map[string]string{"SECRET_TOKEN": "provided"})
+		},
+		ConfigResolver: resolve.NewFakeConfigResolver(resolve.NewFakeConfigResolverParams{}),
+	})
+
+	require.NoError(t, l.Lint(context.Background(), []string{"apps/one", "apps/two"}))
+	assert.Equal(t, []string{"repo/apps/one/pkg/config", "repo/apps/two/pkg/config"}, s.prepared)
+}
