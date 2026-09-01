@@ -29,9 +29,17 @@ type scanner interface {
 	Fields(dir string) ([]scan.Field, error)
 }
 
+// preparer is a scanner that can type-check a batch of config packages up front.
+// One load over every app shares the dependency graph they have in common, which
+// is most of it, instead of walking it once per app.
+type preparer interface {
+	Prepare(dirs []string)
+}
+
 // Linter checks each app's required keys against what its resolvers provide.
 type Linter struct {
 	checker *appcheck.Checker
+	scanner scanner
 	project project.Project
 }
 
@@ -56,6 +64,7 @@ func NewLinter(params NewLinterParams) *Linter {
 			SecretResolver:     params.SecretResolver,
 			ConfigResolver:     params.ConfigResolver,
 		}),
+		scanner: params.Scanner,
 		project: params.Project,
 	}
 }
@@ -65,6 +74,17 @@ func NewLinter(params NewLinterParams) *Linter {
 // has a secret hardcoded in its non-secret config, or (with rejectUnreferenced)
 // is handed an unreferenced one.
 func (l *Linter) Lint(ctx context.Context, apps []string) error {
+	// Type-check every app's config package in one pass before fanning out. The
+	// apps' config packages share nearly all of their dependency graph, so loading
+	// them together costs about what loading one of them costs, and it keeps the
+	// concurrent checks below from each compiling the same packages at once.
+	if p, ok := l.scanner.(preparer); ok {
+		dirs := make([]string, 0, len(apps))
+		for _, appPath := range apps {
+			dirs = append(dirs, l.project.AppConfigDir(appPath))
+		}
+		p.Prepare(dirs)
+	}
 
 	// Check every app concurrently; each app's resolver round-trips are
 	// independent. Lint reports all apps even when some fail, so goroutines never

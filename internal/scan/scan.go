@@ -7,32 +7,77 @@ package scan
 import (
 	"fmt"
 	"go/types"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/harrisoncramer/ultra/internal/xmap"
 	"github.com/harrisoncramer/ultra/internal/xstring"
 	"golang.org/x/tools/go/packages"
 )
 
-// Scanner reads config packages off disk and reports their declared fields.
-type Scanner struct{}
+// Scanner reads config packages off disk and reports their declared fields. It
+// caches the Config struct it type-checks per directory, so asking about the same
+// app twice type-checks it once.
+type Scanner struct {
+	mu      sync.Mutex
+	structs map[string]*types.Struct
+}
 
-// NewScanner returns a Scanner. It holds no state; the type exists so callers can
-// depend on it as an injected interface.
-func NewScanner() *Scanner { return &Scanner{} }
+// NewScanner returns a Scanner with an empty type-check cache.
+func NewScanner() *Scanner { return &Scanner{structs: map[string]*types.Struct{}} }
+
+// Prepare type-checks the given config packages in one packages.Load and caches
+// what it resolves, so a later Fields call for any of them is served from memory.
+// One load walks the dependency graph those packages share once instead of once
+// per directory, and that graph is nearly all of the work when several apps embed
+// the same shared config struct.
+//
+// It is advisory, never authoritative: a dir it cannot resolve is left uncached
+// and Fields loads it on its own, reporting the real error there. That covers a
+// package with a genuine problem as well as dirs that cannot be loaded together
+// at all, as separate modules with no workspace tying them together cannot be.
+func (s *Scanner) Prepare(dirs []string) {
+	if len(dirs) < 2 {
+		return
+	}
+	loaded := configStructs(dirs)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for dir, st := range loaded {
+		s.structs[dir] = st
+	}
+}
 
 // Fields returns every env-var field reachable from the exported Config struct in
 // the package at dir.
 func (s *Scanner) Fields(dir string) ([]Field, error) {
-	return Fields(dir)
+	s.mu.Lock()
+	st, ok := s.structs[dir]
+	s.mu.Unlock()
+	if ok {
+		return fieldsOf(dir, st)
+	}
+	st, err := configStruct(dir)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.structs[dir] = st
+	s.mu.Unlock()
+	return fieldsOf(dir, st)
 }
 
 // SecretNames returns the env-var names of every field tagged secret:"true" in
 // the package at dir.
 func (s *Scanner) SecretNames(dir string) ([]string, error) {
-	return SecretNames(dir)
+	fields, err := s.Fields(dir)
+	if err != nil {
+		return nil, err
+	}
+	return secretNamesOf(fields), nil
 }
 
 // ConfigImportPath returns the import path of the config package at dir, so a
@@ -123,7 +168,13 @@ func Fields(dir string) ([]Field, error) {
 	if err != nil {
 		return nil, err
 	}
+	return fieldsOf(dir, st)
+}
 
+// fieldsOf reports the env-var fields of an already type-checked Config struct, so
+// a struct loaded once can be scanned without loading it again. dir names the
+// package in error messages and nothing else.
+func fieldsOf(dir string, st *types.Struct) ([]Field, error) {
 	var fields []Field
 	var badEnvTag []string
 
@@ -228,13 +279,18 @@ func SecretNames(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return secretNamesOf(fields), nil
+}
+
+// secretNamesOf reports the env-var names of the secret-tagged fields.
+func secretNamesOf(fields []Field) []string {
 	var names []string
 	for _, f := range fields {
 		if f.IsSecret {
 			names = append(names, f.Name)
 		}
 	}
-	return names, nil
+	return names
 }
 
 // configStruct type-checks the Go package at dir and returns the underlying
@@ -271,6 +327,54 @@ func configStruct(dir string) (*types.Struct, error) {
 		return nil, fmt.Errorf("config in %s is not a struct", dir)
 	}
 	return st, nil
+}
+
+// configStructs type-checks the given packages in a single packages.Load and
+// returns each Config struct it could resolve, keyed by the directory it was
+// asked for. NeedFiles is in the mode so a loaded package can be mapped back to
+// the directory it came from, since go/packages reports results in no particular
+// order.
+//
+// A package it cannot resolve is omitted rather than failing the batch, so one
+// bad app does not cost every other app the shared load. The result is a cache to
+// consult, not the answer.
+func configStructs(dirs []string) map[string]*types.Struct {
+	patterns := make([]string, 0, len(dirs))
+	byDir := make(map[string]string, len(dirs))
+	for _, dir := range dirs {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		byDir[abs] = dir
+		patterns = append(patterns, "./"+filepath.ToSlash(dir))
+	}
+
+	pkgs, err := packages.Load(&packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedTypes | packages.NeedImports,
+	}, patterns...)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string]*types.Struct, len(pkgs))
+	for _, pkg := range pkgs {
+		if len(pkg.Errors) > 0 || len(pkg.GoFiles) == 0 || pkg.Types == nil {
+			continue
+		}
+		dir, ok := byDir[filepath.Dir(pkg.GoFiles[0])]
+		if !ok {
+			continue
+		}
+		obj := pkg.Types.Scope().Lookup("Config")
+		if obj == nil {
+			continue
+		}
+		if st := structUnder(obj.Type()); st != nil {
+			out[dir] = st
+		}
+	}
+	return out
 }
 
 // ConfigImportPath returns the import path of the Go package at dir, so a generated program can import it and call its Load.
