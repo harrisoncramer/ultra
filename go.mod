@@ -1,6 +1,6 @@
 module github.com/harrisoncramer/ultra
 
-go 1.25.1
+go 1.26.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.42.1
@@ -11,8 +11,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/sync v0.21.0
-	golang.org/x/tools v0.47.0
+	golang.org/x/sync v0.24.0
+	golang.org/x/tools v0.52.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -43,7 +43,7 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 )
