@@ -8,17 +8,20 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/harrisoncramer/ultra/cli"
 
 	"github.com/spf13/pflag"
 )
 
-// opMu serializes `op` invocations. Callers resolve apps concurrently, but the op
-// CLI unlocks via a biometric prompt per invocation until its desktop-app session
-// is cached; firing many at once triggers a prompt storm. Running them one at a
-// time lets the first prompt cache the session so the rest reuse it silently.
-var opMu sync.Mutex
+// gate serializes `op` invocations only until the session is warm. Callers
+// resolve apps concurrently, but the op CLI unlocks via a biometric prompt per
+// invocation until its desktop-app session is cached; firing many at once
+// triggers a prompt storm. Holding the rest back until one call authenticates
+// lets that first prompt cache the session so the rest run concurrently and reuse
+// it silently.
+var gate sessionGate
 
 func init() {
 	cli.RegisterSecretResolver(cli.SecretResolverCommand{
@@ -52,6 +55,11 @@ type opItem struct {
 	Fields []opField `json:"fields"`
 }
 
+type sessionGate struct {
+	mu   sync.Mutex
+	warm atomic.Bool
+}
+
 // Resolve fetches the whole item once and picks out the requested field labels.
 // A missing item is reported as ErrSecretNotFound so an override falls through to
 // the base resolver while a base resolver treats it as fatal; a missing vault, an
@@ -62,15 +70,39 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 		return nil, fmt.Errorf("1password requires --vault")
 	}
 
-	cmd := exec.CommandContext(ctx, "op", "item", "get", o.item, "--vault", o.vault, "--format", "json", "--reveal")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	opMu.Lock()
-	err := cmd.Run()
-	opMu.Unlock()
+	res := gate.do(func() opResult {
+		cmd := exec.CommandContext(ctx, "op", "item", "get", o.item, "--vault", o.vault, "--format", "json", "--reveal")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		return opResult{
+			err:    err,
+			stdout: stdout.Bytes(),
+			stderr: stderr.String(),
+		}
+	})
 
-	return o.pick(opResult{err: err, stdout: stdout.Bytes(), stderr: stderr.String()}, names)
+	return o.pick(res, names)
+}
+
+func (g *sessionGate) do(run func() opResult) opResult {
+	if g.warm.Load() {
+		return run()
+	}
+
+	g.mu.Lock()
+	if g.warm.Load() {
+		g.mu.Unlock()
+		return run()
+	}
+	defer g.mu.Unlock()
+
+	res := run()
+	if res.isAuthenticated() {
+		g.warm.Store(true)
+	}
+	return res
 }
 
 // opResult is the raw outcome of one `op item get`, kept separate from the exec
@@ -80,6 +112,10 @@ type opResult struct {
 	err    error
 	stdout []byte
 	stderr string
+}
+
+func (r opResult) isAuthenticated() bool {
+	return r.err == nil || itemNotFound(r.stderr)
 }
 
 // pick turns a completed op invocation into the requested secrets, reporting a
