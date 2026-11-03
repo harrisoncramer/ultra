@@ -55,6 +55,11 @@ type opItem struct {
 	Fields []opField `json:"fields"`
 }
 
+type sessionGate struct {
+	mu   sync.Mutex
+	warm atomic.Bool
+}
+
 // Resolve fetches the whole item once and picks out the requested field labels.
 // A missing item is reported as ErrSecretNotFound so an override falls through to
 // the base resolver while a base resolver treats it as fatal; a missing vault, an
@@ -71,39 +76,33 @@ func (o onePassword) Resolve(ctx context.Context, names []string) (map[string]st
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		err := cmd.Run()
-		return opResult{err: err, stdout: stdout.Bytes(), stderr: stderr.String()}
+		return opResult{
+			err:    err,
+			stdout: stdout.Bytes(),
+			stderr: stderr.String(),
+		}
 	})
 
 	return o.pick(res, names)
-}
-
-type sessionGate struct {
-	mu   sync.Mutex
-	warm atomic.Bool
 }
 
 func (g *sessionGate) do(run func() opResult) opResult {
 	if g.warm.Load() {
 		return run()
 	}
-	if res, ran := g.doFirst(run); ran {
-		return res
-	}
-	return run()
-}
 
-func (g *sessionGate) doFirst(run func() opResult) (opResult, bool) {
 	g.mu.Lock()
+	if g.warm.Load() {
+		g.mu.Unlock()
+		return run()
+	}
 	defer g.mu.Unlock()
 
-	if g.warm.Load() {
-		return opResult{}, false
-	}
 	res := run()
 	if res.isAuthenticated() {
 		g.warm.Store(true)
 	}
-	return res, true
+	return res
 }
 
 // opResult is the raw outcome of one `op item get`, kept separate from the exec
